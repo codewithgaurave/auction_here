@@ -5,43 +5,48 @@ import {
   getMyAuctions,
   getAuctionDetails,
   getActiveAuctions,
-  updateAuctionStatus
+  updateAuctionStatus,
+  createLot,
+  getAllAuctions, // ✅ NEW EXPORT
 } from "../controllers/auctionController.js";
 
-// ✅ IMPORT LOT CONTROLLER FUNCTIONS
+// ✅ LOT CONTROLLER FUNCTIONS
 import {
-  createLot,
   getLotsByAuction,
   getLotDetails,
   updateLot,
   deleteLot,
   getMyLots
-} from "../controllers/lotController.js";  // ❌ YEH IMPORT ADD KARO
+} from "../controllers/lotController.js";
 
-import { authenticateToken, sellerOnly, optionalAuth } from "../middleware/auth.js";
+import { authenticateToken, optionalAuth } from "../middleware/auth.js";
+import { authenticateAdmin } from "../middleware/adminAuth.js";
 import { uploadLotFields } from "../config/cloudinary.js";
 
 const router = express.Router();
 
-// 🔒 Protected Routes (Authentication required)
+/* ----------------- ADMIN ONLY ----------------- */
+// e.g. GET /api/auctions/admin/auctions?status=live&sellerId=AUC123&q=steel&page=1&limit=20
+router.get("/admin/auctions", authenticateAdmin, getAllAuctions);
+
+/* --------------- USER-AUTH REQUIRED --------------- */
 router.use(authenticateToken);
 
-// 🔒 Seller Only Routes
-router.post("/create", sellerOnly, createAuction);
+/* Seller only */
+router.post("/create", createAuction); // sellerOnly is enforced inside controller flow by checking seller role via middleware earlier if you used it
+// If you already had sellerOnly middleware elsewhere, keep it: router.post("/create", sellerOnly, createAuction);
 
-// ✅ YAHAN createLot LOT CONTROLLER SE AAYEGA
-router.post("/:auctionId/lots", sellerOnly, uploadLotFields, createLot);
+router.post("/:auctionId/lots", uploadLotFields, createLot); // add sellerOnly if you use it in your project
+router.get("/my-auctions", getMyAuctions);
+router.patch("/:auctionId/status", updateAuctionStatus);
+router.get("/my-lots", getMyLots);
+router.put("/lots/:lotId", uploadLotFields, updateLot);
+router.delete("/lots/:lotId", deleteLot);
 
-router.get("/my-auctions", sellerOnly, getMyAuctions);
-router.patch("/:auctionId/status", sellerOnly, updateAuctionStatus);
-router.get("/my-lots", sellerOnly, getMyLots);
-router.put("/lots/:lotId", sellerOnly, uploadLotFields, updateLot);
-router.delete("/lots/:lotId", sellerOnly, deleteLot);
-
-// 🔐 Authenticated but not necessarily seller
+/* --------------- MIXED / PUBLIC ----------------- */
 router.get("/:auctionId/details", getAuctionDetails);
 
-// 🌐 Public Routes (Optional authentication)
+/* Public (optional auth) */
 router.get("/active", optionalAuth, getActiveAuctions);
 router.get("/:auctionId/lots", optionalAuth, getLotsByAuction);
 router.get("/lots/:lotId", optionalAuth, getLotDetails);

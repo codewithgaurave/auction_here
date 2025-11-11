@@ -1,3 +1,4 @@
+// controllers/auctionController.js
 import Auction from "../models/Auction.js";
 import Lot from "../models/Lot.js";
 
@@ -11,6 +12,73 @@ const generateAuctionId = () => {
 
 const generateLotId = () => {
   return "LOT" + Math.random().toString(36).substr(2, 9).toUpperCase();
+};
+
+/* ---------------------------
+   ADMIN: Get All Auctions
+   GET /admin/auctions
+   Query:
+     - page (default 1)
+     - limit (default 10)
+     - status (upcoming|live|completed|cancelled)
+     - sellerId (exact seller userId)
+     - category
+     - q (search: auctionId/auctionName)
+---------------------------- */
+export const getAllAuctions = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      status,
+      sellerId,
+      category,
+      q
+    } = req.query;
+
+    const pg = Math.max(1, parseInt(page, 10) || 1);
+    const lim = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+    const skip = (pg - 1) * lim;
+
+    const filter = {};
+    if (status) filter.status = status;
+    if (sellerId) filter.sellerId = sellerId;
+    if (category) filter.category = category;
+    if (q && String(q).trim()) {
+      const term = String(q).trim();
+      filter.$or = [
+        { auctionId: new RegExp(term, "i") },
+        { auctionName: new RegExp(term, "i") }
+      ];
+    }
+
+    const [auctions, total] = await Promise.all([
+      Auction.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(lim)
+        .populate("lots", "lotId lotName currentBid status")
+        .select("-__v"),
+      Auction.countDocuments(filter)
+    ]);
+
+    return res.json({
+      success: true,
+      page: pg,
+      limit: lim,
+      totalPages: Math.ceil(total / lim),
+      totalAuctions: total,
+      count: auctions.length,
+      auctions
+    });
+  } catch (error) {
+    console.error("Admin getAllAuctions error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while fetching all auctions",
+      error: error.message
+    });
+  }
 };
 
 // ✅ Create Auction (Seller Only)
@@ -77,7 +145,6 @@ export const createAuction = async (req, res) => {
       try {
         await Auction.deleteOne({ _id: newAuction._id });
       } catch (rollbackErr) {
-        // log rollback error but continue returning quota failure
         console.error("Auction rollback failed after quota consume error:", rollbackErr);
       }
       return res.status(402).json({
@@ -126,7 +193,6 @@ export const createLot = async (req, res) => {
       proofOfOwnership
     } = req.body;
 
-    // Validation
     if (!lotName || !description || !category || !quantity || !unit || !startPrice || !reservePrice || !minIncrement) {
       return res.status(400).json({
         success: false,
@@ -134,12 +200,7 @@ export const createLot = async (req, res) => {
       });
     }
 
-    // Check if auction exists and belongs to the seller
-    const auction = await Auction.findOne({ 
-      auctionId, 
-      sellerId: req.user.userId 
-    });
-
+    const auction = await Auction.findOne({ auctionId, sellerId: req.user.userId });
     if (!auction) {
       return res.status(404).json({
         success: false,
@@ -147,7 +208,6 @@ export const createLot = async (req, res) => {
       });
     }
 
-    // Check if auction is still upcoming/live
     if (auction.status === "completed" || auction.status === "cancelled") {
       return res.status(400).json({
         success: false,
@@ -155,7 +215,6 @@ export const createLot = async (req, res) => {
       });
     }
 
-    // Create lot
     const newLot = new Lot({
       lotId: generateLotId(),
       auctionId,
@@ -175,7 +234,6 @@ export const createLot = async (req, res) => {
 
     await newLot.save();
 
-    // Add lot to auction and update total lots count
     auction.lots.push(newLot._id);
     auction.totalLots += 1;
     auction.updatedAt = new Date();
@@ -209,15 +267,14 @@ export const getMyAuctions = async (req, res) => {
   try {
     const auctions = await Auction.find({ sellerId: req.user.userId })
       .sort({ createdAt: -1 })
-      .populate('lots', 'lotName currentBid status')
-      .select('-__v');
+      .populate("lots", "lotName currentBid status")
+      .select("-__v");
 
     return res.json({
       success: true,
       count: auctions.length,
       auctions
     });
-
   } catch (error) {
     console.error("Get my auctions error:", error);
     return res.status(500).json({
@@ -235,8 +292,8 @@ export const getAuctionDetails = async (req, res) => {
 
     const auction = await Auction.findOne({ auctionId })
       .populate({
-        path: 'lots',
-        select: 'lotId lotName description category startPrice currentBid reservePrice status images',
+        path: "lots",
+        select: "lotId lotName description category startPrice currentBid reservePrice status images",
         options: { sort: { createdAt: -1 } }
       });
 
@@ -251,7 +308,6 @@ export const getAuctionDetails = async (req, res) => {
       success: true,
       auction
     });
-
   } catch (error) {
     console.error("Get auction details error:", error);
     return res.status(500).json({
@@ -266,30 +322,30 @@ export const getAuctionDetails = async (req, res) => {
 export const getActiveAuctions = async (req, res) => {
   try {
     const { page = 1, limit = 10, category } = req.query;
-    const skip = (page - 1) * limit;
+    const pg = Math.max(1, parseInt(page, 10) || 1);
+    const lim = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+    const skip = (pg - 1) * lim;
 
-    let filter = { status: { $in: ["upcoming", "live"] } };
-    if (category) {
-      filter.category = category;
-    }
+    const filter = { status: { $in: ["upcoming", "live"] } };
+    if (category) filter.category = category;
 
-    const auctions = await Auction.find(filter)
-      .sort({ startDate: 1 })
-      .skip(skip)
-      .limit(parseInt(limit))
-      .populate('lots', 'lotName startPrice currentBid images')
-      .select('auctionId auctionName category startDate endDate status totalLots');
-
-    const total = await Auction.countDocuments(filter);
+    const [auctions, total] = await Promise.all([
+      Auction.find(filter)
+        .sort({ startDate: 1 })
+        .skip(skip)
+        .limit(lim)
+        .populate("lots", "lotName startPrice currentBid images")
+        .select("auctionId auctionName category startDate endDate status totalLots"),
+      Auction.countDocuments(filter)
+    ]);
 
     return res.json({
       success: true,
-      page: parseInt(page),
-      totalPages: Math.ceil(total / limit),
+      page: pg,
+      totalPages: Math.ceil(total / lim),
       totalAuctions: total,
       auctions
     });
-
   } catch (error) {
     console.error("Get active auctions error:", error);
     return res.status(500).json({
@@ -300,7 +356,7 @@ export const getActiveAuctions = async (req, res) => {
   }
 };
 
-// ✅ Update Auction Status (Automatically based on dates)
+// ✅ Update Auction Status (Seller)
 export const updateAuctionStatus = async (req, res) => {
   try {
     const { auctionId } = req.params;
@@ -314,11 +370,7 @@ export const updateAuctionStatus = async (req, res) => {
       });
     }
 
-    const auction = await Auction.findOne({ 
-      auctionId, 
-      sellerId: req.user.userId 
-    });
-
+    const auction = await Auction.findOne({ auctionId, sellerId: req.user.userId });
     if (!auction) {
       return res.status(404).json({
         success: false,
@@ -339,7 +391,6 @@ export const updateAuctionStatus = async (req, res) => {
         status: auction.status
       }
     });
-
   } catch (error) {
     console.error("Update auction status error:", error);
     return res.status(500).json({
