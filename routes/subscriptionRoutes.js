@@ -10,7 +10,8 @@ import {
   deletePlan,
   listPlansPublic,
   purchasePlan,
-  getMyActiveSubscription
+  getMyActiveSubscription,
+  listAllPurchases 
 } from "../controllers/subscriptionController.js";
 
 const router = express.Router();
@@ -28,5 +29,8 @@ router.get("/admin/plans", authenticateAdmin, listPlansAdmin);
 router.get("/admin/plans/:planId", authenticateAdmin, getPlan);
 router.patch("/admin/plans/:planId", authenticateAdmin, updatePlan);
 router.delete("/admin/plans/:planId", authenticateAdmin, deletePlan);
+// ADMIN: all purchases (user subscriptions)
+router.get("/admin/purchases", authenticateAdmin, listAllPurchases);
+
 
 export default router;

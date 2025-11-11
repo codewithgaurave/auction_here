@@ -383,3 +383,156 @@ export const getMyActiveSubscription = async (req, res) => {
       .json({ success: false, message: "Error", error: err.message });
   }
 };
+
+// ⬇️ NEW: ADMIN — list all purchased plans (UserSubscriptions) with filters + pagination
+export const listAllPurchases = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      status,              // active | expired | cancelled
+      userType,            // Seller | Buyer | Seller & Buyer Both
+      userId,              // exact User.userId
+      planId,              // exact SubscriptionPlan.planId
+      q,                   // search in userId / user.name / user.email
+      startDate,           // ISO (filter by subscription startDate >=)
+      endDate              // ISO (filter by subscription startDate <=)
+    } = req.query;
+
+    const pg = Math.max(1, parseInt(page, 10) || 1);
+    const lim = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const skip = (pg - 1) * lim;
+
+    const match = {};
+    if (status) match.status = status;
+    if (userType) match.userType = userType;
+    if (userId) match.userId = userId;
+    if (planId) match.planId = planId;
+
+    if (startDate || endDate) {
+      match.startDate = {};
+      if (startDate) match.startDate.$gte = new Date(startDate);
+      if (endDate)   match.startDate.$lte = new Date(endDate);
+    }
+
+    // Base pipeline
+    const pipeline = [
+      { $match: match },
+      { $sort: { createdAt: -1 } },
+
+      // Join User (by string userId)
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "userId",
+          as: "user"
+        }
+      },
+      { $addFields: { user: { $first: "$user" } } },
+
+      // If q is present, filter by user fields too
+      ...(q ? [{
+        $match: {
+          $or: [
+            { userId: { $regex: q, $options: "i" } },
+            { "user.name": { $regex: q, $options: "i" } },
+            { "user.email": { $regex: q, $options: "i" } }
+          ]
+        }
+      }] : []),
+
+      // Join Plan (by string planId — collection name is subscriptionplans)
+      {
+        $lookup: {
+          from: "subscriptionplans",
+          localField: "planId",
+          foreignField: "planId",
+          as: "plan"
+        }
+      },
+      { $addFields: { plan: { $first: "$plan" } } },
+
+      // Count total after joins/filters
+      {
+        $facet: {
+          rows: [
+            { $skip: skip },
+            { $limit: lim },
+            {
+              $project: {
+                _id: 0,
+                userSubId: 1,
+                userId: 1,
+                userType: 1,
+                status: 1,
+                startDate: 1,
+                endDate: 1,
+                remainingAuctions: 1,
+                remainingBids: 1,
+                paymentRef: 1,
+                createdAt: 1,
+                updatedAt: 1,
+
+                // Snapshot (as purchased)
+                planSnapshot: 1,
+
+                // Current user (joined)
+                user: {
+                  _id: 1,
+                  userId: 1,
+                  name: 1,
+                  email: 1,
+                  userType: 1,
+                  registrationStatus: 1
+                },
+
+                // Current plan (joined)
+                plan: {
+                  _id: 1,
+                  planId: 1,
+                  name: 1,
+                  userType: 1,
+                  price: 1,
+                  currency: 1,
+                  durationDays: 1,
+                  sellerAuctionLimit: 1,
+                  buyerBidLimit: 1,
+                  status: 1,
+                }
+              }
+            }
+          ],
+          meta: [{ $count: "total" }]
+        }
+      },
+      {
+        $project: {
+          rows: 1,
+          total: { $ifNull: [{ $arrayElemAt: ["$meta.total", 0] }, 0] }
+        }
+      }
+    ];
+
+    const result = await UserSubscription.aggregate(pipeline);
+    const rows = result?.[0]?.rows || [];
+    const total = result?.[0]?.total || 0;
+
+    return res.json({
+      success: true,
+      page: pg,
+      limit: lim,
+      totalPages: Math.ceil(total / lim),
+      totalPurchases: total,
+      count: rows.length,
+      purchases: rows
+    });
+  } catch (err) {
+    console.error("listAllPurchases error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Error listing purchases",
+      error: err.message
+    });
+  }
+};
