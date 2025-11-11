@@ -27,6 +27,7 @@ const generateLotId = () => {
      - category
      - q (search: auctionId/auctionName)
 ---------------------------- */
+// controllers/auctionController.js (only getAllAuctions updated)
 export const getAllAuctions = async (req, res) => {
   try {
     const {
@@ -42,10 +43,9 @@ export const getAllAuctions = async (req, res) => {
     const lim = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
     const skip = (pg - 1) * lim;
 
-    // Build match filter
     const match = {};
     if (status) match.status = status;
-    if (sellerId) match.sellerId = sellerId; // sellerId is userId string
+    if (sellerId) match.sellerId = sellerId;
     if (category) match.category = category;
     if (q && String(q).trim()) {
       const term = String(q).trim();
@@ -55,32 +55,30 @@ export const getAllAuctions = async (req, res) => {
       ];
     }
 
-    // Total count (same filter)
     const total = await Auction.countDocuments(match);
 
-    // Aggregation with seller (users collection) and lots
     const auctions = await Auction.aggregate([
       { $match: match },
       { $sort: { createdAt: -1 } },
       { $skip: skip },
       { $limit: lim },
 
-      // Lookup seller by users.userId (NOT _id)
+      // join seller by users.userId (string)
       {
         $lookup: {
-          from: "users",               // collection name in Mongo
-          localField: "sellerId",      // auction.sellerId (string userId)
-          foreignField: "userId",      // users.userId (string)
+          from: "users",
+          localField: "sellerId",
+          foreignField: "userId",
           as: "seller"
         }
       },
       { $addFields: { seller: { $first: "$seller" } } },
 
-      // Lookup lots (ObjectId refs)
+      // join lots
       {
         $lookup: {
           from: "lots",
-          localField: "lots",          // ObjectId[] in auction
+          localField: "lots",
           foreignField: "_id",
           as: "lots",
           pipeline: [
@@ -89,11 +87,13 @@ export const getAllAuctions = async (req, res) => {
         }
       },
 
-      // Shape output & drop internal fields you don't want
+      // (optional) drop __v safely without mixing include/exclude
+      // { $unset: "__v" },
+
+      // include-only projection (no exclusion other than optional _id)
       {
         $project: {
-          __v: 0,
-          // keep all auction fields you need:
+          // _id: 0, // uncomment if you want to hide _id
           auctionId: 1,
           sellerId: 1,
           auctionName: 1,
@@ -108,7 +108,6 @@ export const getAllAuctions = async (req, res) => {
           createdAt: 1,
           updatedAt: 1,
           lots: 1,
-          // expose minimal seller info
           seller: {
             _id: 1,
             userId: 1,
@@ -119,7 +118,6 @@ export const getAllAuctions = async (req, res) => {
       }
     ]);
 
-    // Add a convenience field sellerName at top-level
     const shaped = auctions.map(a => ({
       ...a,
       sellerName: a?.seller?.name || null
@@ -143,6 +141,7 @@ export const getAllAuctions = async (req, res) => {
     });
   }
 };
+
 
 // ✅ Create Auction (Seller Only)
 export const createAuction = async (req, res) => {
