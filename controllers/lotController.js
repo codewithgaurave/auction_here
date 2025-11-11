@@ -36,115 +36,122 @@ const deleteUploadedFiles = async (files) => {
 };
 
 // ✅ Get All Lots with Auction Details (Admin Only)
+// ✅ Get All Lots with Auction Details (Admin Only) — FIXED via aggregation
 export const getAllLots = async (req, res) => {
   try {
-    const { 
-      page = 1, 
-      limit = 20, 
-      status, 
-      auctionId, 
+    let {
+      page = 1,
+      limit = 20,
+      status,
+      auctionId,
       sellerId,
       category,
       minPrice,
       maxPrice,
-      search 
+      search,
     } = req.query;
-    
-    const skip = (page - 1) * limit;
 
-    // Build filter object
-    let filter = {};
+    const pg = Math.max(1, parseInt(page, 10) || 1);
+    const lim = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const skip = (pg - 1) * lim;
 
-    // Status filter
-    if (status && status !== 'all') {
-      filter.status = status;
-    }
+    // ---- Build match filter (plain objects; auctionId/sellerId are strings) ----
+    const match = {};
 
-    // Auction filter
-    if (auctionId) {
-      filter.auctionId = auctionId;
-    }
+    if (status && status !== "all") match.status = status;
+    if (auctionId) match.auctionId = auctionId;      // Lot.auctionId is a STRING like "AUCXXXX"
+    if (sellerId) match.sellerId = sellerId;         // sellerId string
+    if (category) match.category = category;
 
-    // Seller filter
-    if (sellerId) {
-      filter.sellerId = sellerId;
-    }
-
-    // Category filter
-    if (category) {
-      filter.category = category;
-    }
-
-    // Price range filter
     if (minPrice || maxPrice) {
-      filter.currentBid = {};
-      if (minPrice) filter.currentBid.$gte = parseFloat(minPrice);
-      if (maxPrice) filter.currentBid.$lte = parseFloat(maxPrice);
+      match.currentBid = {};
+      if (minPrice) match.currentBid.$gte = parseFloat(minPrice);
+      if (maxPrice) match.currentBid.$lte = parseFloat(maxPrice);
     }
 
-    // Search filter
-    if (search) {
-      filter.$or = [
-        { lotName: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { lotId: { $regex: search, $options: 'i' } }
+    if (search && String(search).trim()) {
+      const term = String(search).trim();
+      match.$or = [
+        { lotName: { $regex: term, $options: "i" } },
+        { description: { $regex: term, $options: "i" } },
+        { lotId: { $regex: term, $options: "i" } },
       ];
     }
 
-    // Get lots with auction details
-    const lots = await Lot.find(filter)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit))
-      .populate('auctionId', 'auctionName auctionId startDate endDate status sellerId')
-      .select('-__v');
+    // ---- total count ----
+    const total = await Lot.countDocuments(match);
 
-    const total = await Lot.countDocuments(filter);
+    // ---- aggregation with join to auctions by auctionId (string) ----
+    const lots = await Lot.aggregate([
+      { $match: match },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: lim },
 
-    // Format response with auction details
-    const formattedLots = lots.map(lot => ({
-      lotId: lot.lotId,
-      lotName: lot.lotName,
-      description: lot.description,
-      category: lot.category,
-      quantity: lot.quantity,
-      unit: lot.unit,
-      startPrice: lot.startPrice,
-      reservePrice: lot.reservePrice,
-      minIncrement: lot.minIncrement,
-      currentBid: lot.currentBid,
-      currentBidder: lot.currentBidder,
-      status: lot.status,
-      images: lot.images,
-      imagesCount: lot.images ? lot.images.length : 0,
-      sellerId: lot.sellerId,
-      createdAt: lot.createdAt,
-      updatedAt: lot.updatedAt,
-      auction: lot.auctionId ? {
-        auctionId: lot.auctionId.auctionId,
-        auctionName: lot.auctionId.auctionName,
-        startDate: lot.auctionId.startDate,
-        endDate: lot.auctionId.endDate,
-        status: lot.auctionId.status,
-        sellerId: lot.auctionId.sellerId
-      } : null,
-      bidsCount: lot.bids ? lot.bids.length : 0
-    }));
+      // join auctions collection on auctionId (string -> string)
+      {
+        $lookup: {
+          from: "auctions",
+          localField: "auctionId",      // e.g. "AUC360NWEQET"
+          foreignField: "auctionId",    // auction doc also has auctionId string
+          as: "auction",
+          pipeline: [
+            {
+              $project: {
+                _id: 0,
+                auctionId: 1,
+                auctionName: 1,
+                startDate: 1,
+                endDate: 1,
+                status: 1,
+                sellerId: 1,
+              },
+            },
+          ],
+        },
+      },
+      { $addFields: { auction: { $first: "$auction" } } },
+
+      // shape output
+      {
+        $project: {
+          _id: 0,
+          lotId: 1,
+          lotName: 1,
+          description: 1,
+          category: 1,
+          quantity: 1,
+          unit: 1,
+          startPrice: 1,
+          reservePrice: 1,
+          minIncrement: 1,
+          currentBid: 1,
+          currentBidder: 1,
+          status: 1,
+          images: 1,
+          sellerId: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          bidsCount: { $size: { $ifNull: ["$bids", []] } },
+          imagesCount: { $size: { $ifNull: ["$images", []] } },
+          auction: 1,
+        },
+      },
+    ]);
 
     return res.json({
       success: true,
-      page: parseInt(page),
-      totalPages: Math.ceil(total / limit),
+      page: pg,
+      totalPages: Math.ceil(total / lim),
       totalLots: total,
-      lots: formattedLots
+      lots,
     });
-
   } catch (error) {
     console.error("Get all lots error:", error);
     return res.status(500).json({
       success: false,
       message: "Server error while fetching all lots",
-      error: error.message
+      error: error.message,
     });
   }
 };
