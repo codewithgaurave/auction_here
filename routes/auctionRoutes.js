@@ -7,11 +7,12 @@ import {
   getActiveAuctions,
   updateAuctionStatus,
   createLot,
-  getAllAuctions, // ✅ NEW EXPORT
+  getAllAuctions,
 } from "../controllers/auctionController.js";
 
 // ✅ LOT CONTROLLER FUNCTIONS
 import {
+  getAllLots,
   getLotsByAuction,
   getLotDetails,
   updateLot,
@@ -26,17 +27,18 @@ import { uploadLotFields } from "../config/cloudinary.js";
 const router = express.Router();
 
 /* ----------------- ADMIN ONLY ----------------- */
-// e.g. GET /api/auctions/admin/auctions?status=live&sellerId=AUC123&q=steel&page=1&limit=20
+// GET /api/auctions/admin/auctions?status=live&sellerId=AUC123&q=steel&page=1&limit=20
 router.get("/admin/auctions", authenticateAdmin, getAllAuctions);
+
+// GET /api/auctions/admin/lots?status=active&auctionId=AUCTION123&sellerId=USER456&category=electronics&minPrice=100&maxPrice=1000&search=laptop&page=1&limit=20
+router.get("/admin/lots", authenticateAdmin, getAllLots);
 
 /* --------------- USER-AUTH REQUIRED --------------- */
 router.use(authenticateToken);
 
 /* Seller only */
-router.post("/create", createAuction); // sellerOnly is enforced inside controller flow by checking seller role via middleware earlier if you used it
-// If you already had sellerOnly middleware elsewhere, keep it: router.post("/create", sellerOnly, createAuction);
-
-router.post("/:auctionId/lots", uploadLotFields, createLot); // add sellerOnly if you use it in your project
+router.post("/create", createAuction);
+router.post("/:auctionId/lots", uploadLotFields, createLot);
 router.get("/my-auctions", getMyAuctions);
 router.patch("/:auctionId/status", updateAuctionStatus);
 router.get("/my-lots", getMyLots);

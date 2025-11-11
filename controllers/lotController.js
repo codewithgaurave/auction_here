@@ -35,6 +35,120 @@ const deleteUploadedFiles = async (files) => {
   }
 };
 
+// ✅ Get All Lots with Auction Details (Admin Only)
+export const getAllLots = async (req, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 20, 
+      status, 
+      auctionId, 
+      sellerId,
+      category,
+      minPrice,
+      maxPrice,
+      search 
+    } = req.query;
+    
+    const skip = (page - 1) * limit;
+
+    // Build filter object
+    let filter = {};
+
+    // Status filter
+    if (status && status !== 'all') {
+      filter.status = status;
+    }
+
+    // Auction filter
+    if (auctionId) {
+      filter.auctionId = auctionId;
+    }
+
+    // Seller filter
+    if (sellerId) {
+      filter.sellerId = sellerId;
+    }
+
+    // Category filter
+    if (category) {
+      filter.category = category;
+    }
+
+    // Price range filter
+    if (minPrice || maxPrice) {
+      filter.currentBid = {};
+      if (minPrice) filter.currentBid.$gte = parseFloat(minPrice);
+      if (maxPrice) filter.currentBid.$lte = parseFloat(maxPrice);
+    }
+
+    // Search filter
+    if (search) {
+      filter.$or = [
+        { lotName: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+        { lotId: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    // Get lots with auction details
+    const lots = await Lot.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .populate('auctionId', 'auctionName auctionId startDate endDate status sellerId')
+      .select('-__v');
+
+    const total = await Lot.countDocuments(filter);
+
+    // Format response with auction details
+    const formattedLots = lots.map(lot => ({
+      lotId: lot.lotId,
+      lotName: lot.lotName,
+      description: lot.description,
+      category: lot.category,
+      quantity: lot.quantity,
+      unit: lot.unit,
+      startPrice: lot.startPrice,
+      reservePrice: lot.reservePrice,
+      minIncrement: lot.minIncrement,
+      currentBid: lot.currentBid,
+      currentBidder: lot.currentBidder,
+      status: lot.status,
+      images: lot.images,
+      imagesCount: lot.images ? lot.images.length : 0,
+      sellerId: lot.sellerId,
+      createdAt: lot.createdAt,
+      updatedAt: lot.updatedAt,
+      auction: lot.auctionId ? {
+        auctionId: lot.auctionId.auctionId,
+        auctionName: lot.auctionId.auctionName,
+        startDate: lot.auctionId.startDate,
+        endDate: lot.auctionId.endDate,
+        status: lot.auctionId.status,
+        sellerId: lot.auctionId.sellerId
+      } : null,
+      bidsCount: lot.bids ? lot.bids.length : 0
+    }));
+
+    return res.json({
+      success: true,
+      page: parseInt(page),
+      totalPages: Math.ceil(total / limit),
+      totalLots: total,
+      lots: formattedLots
+    });
+
+  } catch (error) {
+    console.error("Get all lots error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while fetching all lots",
+      error: error.message
+    });
+  }
+};
+
 // ✅ Create Lot
 export const createLot = async (req, res) => {
   let uploadedFiles = null;
@@ -726,6 +840,7 @@ export const getLotAnalytics = async (req, res) => {
 };
 
 export default {
+  getAllLots,
   createLot,
   getLotsByAuction,
   getLotDetails,
