@@ -2,6 +2,8 @@
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import User from "../models/User.js";
+import Auction from "../models/Auction.js";
+import Bid from "../models/Bid.js";
 import { cloudinary } from "../config/cloudinary.js";
 
 // ✅ Dynamically generate JWT secret
@@ -41,6 +43,47 @@ const deleteUploadedFiles = async (files) => {
     await Promise.all(deletePromises);
   } catch (error) {
     console.error('Error deleting uploaded files:', error);
+  }
+};
+
+// ✅ Helper function: Get user activity stats
+const getUserActivityStats = async (userId) => {
+  try {
+    const [auctionsCount, bidsCount, activeAuctionsCount, wonAuctionsCount] = await Promise.all([
+      // Total auctions created by user
+      Auction.countDocuments({ sellerId: userId }),
+      
+      // Total bids placed by user
+      Bid.countDocuments({ bidderId: userId, status: "valid" }),
+      
+      // Active auctions (upcoming + live)
+      Auction.countDocuments({ 
+        sellerId: userId, 
+        status: { $in: ["upcoming", "live"] } 
+      }),
+      
+      // Won auctions (based on bids - this is a simplified version)
+      // You might want to enhance this based on your business logic
+      Bid.countDocuments({ 
+        bidderId: userId, 
+        status: "valid" 
+      }).distinct('lotId') // Count distinct lots user has bid on
+    ]);
+
+    return {
+      auctionsCount,
+      bidsCount,
+      activeAuctionsCount,
+      wonAuctionsCount: wonAuctionsCount.length || 0
+    };
+  } catch (error) {
+    console.error('Error getting user activity stats:', error);
+    return {
+      auctionsCount: 0,
+      bidsCount: 0,
+      activeAuctionsCount: 0,
+      wonAuctionsCount: 0
+    };
   }
 };
 
@@ -171,7 +214,7 @@ export const registerUser = async (req, res) => {
   }
 };
 
-// ✅ User Login (Same as before)
+// ✅ User Login (Updated with activity stats)
 export const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -192,6 +235,9 @@ export const loginUser = async (req, res) => {
         registrationStatus: user.registrationStatus
       });
     }
+
+    // Get user activity stats
+    const activityStats = await getUserActivityStats(user.userId);
 
     // 🔥 Generate JWT Token
     const token = jwt.sign(
@@ -219,6 +265,7 @@ export const loginUser = async (req, res) => {
         registrationStatus: user.registrationStatus,
         profilePhoto: user.profilePhoto,
         token: user.token,
+        activityStats
       },
     });
   } catch (err) {
@@ -290,9 +337,15 @@ export const updateUserProfile = async (req, res) => {
       { new: true }
     ).select("-password -token");
 
+    // Get updated activity stats
+    const activityStats = await getUserActivityStats(userId);
+
     return res.json({
       message: "Profile updated successfully",
-      user: updatedUser
+      user: {
+        ...updatedUser.toObject(),
+        activityStats
+      }
     });
 
   } catch (err) {
@@ -354,7 +407,7 @@ export const deleteUser = async (req, res) => {
   }
 };
 
-// ✅ Get User Profile (Same as before)
+// ✅ Get User Profile (Updated with activity stats)
 export const getUserProfile = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -364,7 +417,15 @@ export const getUserProfile = async (req, res) => {
       return res.status(404).json({ message: "User not found." });
     }
 
-    return res.json({ user });
+    // Get user activity stats
+    const activityStats = await getUserActivityStats(userId);
+
+    return res.json({ 
+      user: {
+        ...user.toObject(),
+        activityStats
+      }
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ 
@@ -374,13 +435,25 @@ export const getUserProfile = async (req, res) => {
   }
 };
 
-// ✅ List All Users (for admin)
+// ✅ List All Users (for admin - Updated with activity stats)
 export const listUsers = async (req, res) => {
   try {
     const users = await User.find({}, "-password -token").sort({ createdAt: -1 });
+    
+    // Get activity stats for each user
+    const usersWithStats = await Promise.all(
+      users.map(async (user) => {
+        const activityStats = await getUserActivityStats(user.userId);
+        return {
+          ...user.toObject(),
+          activityStats
+        };
+      })
+    );
+
     return res.json({ 
-      count: users.length,
-      users 
+      count: usersWithStats.length,
+      users: usersWithStats
     });
   } catch (err) {
     return res.status(500).json({ 
@@ -417,9 +490,15 @@ export const updateUserStatus = async (req, res) => {
       return res.status(404).json({ message: "User not found." });
     }
 
+    // Get updated activity stats
+    const activityStats = await getUserActivityStats(userId);
+
     return res.json({
       message: `User status updated to ${registrationStatus}`,
-      user
+      user: {
+        ...user.toObject(),
+        activityStats
+      }
     });
   } catch (err) {
     console.error(err);
@@ -430,7 +509,7 @@ export const updateUserStatus = async (req, res) => {
   }
 };
 
-// ✅ Check Registration Status
+// ✅ Check Registration Status (Updated with activity stats)
 export const checkRegistrationStatus = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -440,12 +519,16 @@ export const checkRegistrationStatus = async (req, res) => {
       return res.status(404).json({ message: "User not found." });
     }
 
+    // Get user activity stats
+    const activityStats = await getUserActivityStats(userId);
+
     return res.json({
       userId: user.userId,
       name: user.name,
       registrationStatus: user.registrationStatus,
       profilePhoto: user.profilePhoto,
-      createdAt: user.createdAt
+      createdAt: user.createdAt,
+      activityStats
     });
   } catch (err) {
     console.error(err);
@@ -456,7 +539,7 @@ export const checkRegistrationStatus = async (req, res) => {
   }
 };
 
-// ✅ Get Users by Status (for admin dashboard)
+// ✅ Get Users by Status (for admin dashboard - Updated with activity stats)
 export const getUsersByStatus = async (req, res) => {
   try {
     const { status } = req.params;
@@ -472,10 +555,21 @@ export const getUsersByStatus = async (req, res) => {
       .select("userId name email userType organizationType createdAt profilePhoto")
       .sort({ createdAt: -1 });
 
+    // Get activity stats for each user
+    const usersWithStats = await Promise.all(
+      users.map(async (user) => {
+        const activityStats = await getUserActivityStats(user.userId);
+        return {
+          ...user.toObject(),
+          activityStats
+        };
+      })
+    );
+
     return res.json({
       status,
-      count: users.length,
-      users
+      count: usersWithStats.length,
+      users: usersWithStats
     });
   } catch (err) {
     console.error(err);
@@ -486,7 +580,7 @@ export const getUsersByStatus = async (req, res) => {
   }
 };
 
-// ✅ Get Dashboard Stats (for admin)
+// ✅ Get Dashboard Stats (for admin - Enhanced with activity insights)
 export const getDashboardStats = async (req, res) => {
   try {
     const totalUsers = await User.countDocuments();
@@ -504,7 +598,15 @@ export const getDashboardStats = async (req, res) => {
       }
     ]);
 
+    // Additional activity stats
+    const totalAuctions = await Auction.countDocuments();
+    const totalBids = await Bid.countDocuments({ status: "valid" });
+    const activeAuctions = await Auction.countDocuments({ 
+      status: { $in: ["upcoming", "live"] } 
+    });
+
     return res.json({
+      // User stats
       totalUsers,
       statusStats: {
         pending: pendingUsers,
@@ -512,7 +614,102 @@ export const getDashboardStats = async (req, res) => {
         approved: approvedUsers,
         rejected: rejectedUsers
       },
-      userTypeStats
+      userTypeStats,
+      
+      // Activity stats
+      activityStats: {
+        totalAuctions,
+        totalBids,
+        activeAuctions
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ 
+      message: "Server error", 
+      error: err.message 
+    });
+  }
+};
+
+// ✅ Get User Detailed Activity (New endpoint for detailed user activity)
+export const getUserDetailedActivity = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findOne({ userId }).select("userId name email userType");
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    // Get detailed activity data based on user type
+    let detailedActivity = {};
+
+    if (user.userType === "Seller" || user.userType === "Seller & Buyer Both") {
+      // Seller activities
+      const sellerAuctions = await Auction.find({ sellerId: userId })
+        .select("auctionId auctionName category status startDate endDate totalLots")
+        .sort({ createdAt: -1 })
+        .limit(10);
+
+      const auctionStats = await Auction.aggregate([
+        { $match: { sellerId: userId } },
+        {
+          $group: {
+            _id: "$status",
+            count: { $sum: 1 }
+          }
+        }
+      ]);
+
+      detailedActivity.sellerData = {
+        recentAuctions: sellerAuctions,
+        auctionStatusStats: auctionStats
+      };
+    }
+
+    if (user.userType === "Buyer" || user.userType === "Seller & Buyer Both") {
+      // Buyer activities
+      const recentBids = await Bid.find({ bidderId: userId, status: "valid" })
+        .select("bidId lotId auctionId amount createdAt")
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .populate({
+          path: 'lotId',
+          select: 'lotName currentBid status',
+          model: 'Lot'
+        });
+
+      const bidStats = await Bid.aggregate([
+        { $match: { bidderId: userId, status: "valid" } },
+        {
+          $group: {
+            _id: null,
+            totalBids: { $sum: 1 },
+            totalAmount: { $sum: "$amount" },
+            averageBid: { $avg: "$amount" }
+          }
+        }
+      ]);
+
+      detailedActivity.buyerData = {
+        recentBids,
+        bidStats: bidStats[0] || { totalBids: 0, totalAmount: 0, averageBid: 0 }
+      };
+    }
+
+    // Get basic activity stats
+    const activityStats = await getUserActivityStats(userId);
+
+    return res.json({
+      user: {
+        userId: user.userId,
+        name: user.name,
+        email: user.email,
+        userType: user.userType
+      },
+      activityStats,
+      detailedActivity
     });
   } catch (err) {
     console.error(err);
