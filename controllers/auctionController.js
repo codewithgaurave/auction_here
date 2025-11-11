@@ -1,6 +1,8 @@
 // controllers/auctionController.js
 import Auction from "../models/Auction.js";
 import Lot from "../models/Lot.js";
+// (Optional) direct import not needed for aggregation, but fine to keep if you need elsewhere
+// import User from "../models/User.js";
 
 // ⬇️ Subscription quota hooks
 import { hasAuctionQuota, consumeAuctionQuota } from "../services/subscriptionQuota.js";
@@ -15,7 +17,7 @@ const generateLotId = () => {
 };
 
 /* ---------------------------
-   ADMIN: Get All Auctions
+   ADMIN: Get All Auctions (with seller name)
    GET /admin/auctions
    Query:
      - page (default 1)
@@ -40,27 +42,88 @@ export const getAllAuctions = async (req, res) => {
     const lim = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
     const skip = (pg - 1) * lim;
 
-    const filter = {};
-    if (status) filter.status = status;
-    if (sellerId) filter.sellerId = sellerId;
-    if (category) filter.category = category;
+    // Build match filter
+    const match = {};
+    if (status) match.status = status;
+    if (sellerId) match.sellerId = sellerId; // sellerId is userId string
+    if (category) match.category = category;
     if (q && String(q).trim()) {
       const term = String(q).trim();
-      filter.$or = [
+      match.$or = [
         { auctionId: new RegExp(term, "i") },
         { auctionName: new RegExp(term, "i") }
       ];
     }
 
-    const [auctions, total] = await Promise.all([
-      Auction.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(lim)
-        .populate("lots", "lotId lotName currentBid status")
-        .select("-__v"),
-      Auction.countDocuments(filter)
+    // Total count (same filter)
+    const total = await Auction.countDocuments(match);
+
+    // Aggregation with seller (users collection) and lots
+    const auctions = await Auction.aggregate([
+      { $match: match },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: lim },
+
+      // Lookup seller by users.userId (NOT _id)
+      {
+        $lookup: {
+          from: "users",               // collection name in Mongo
+          localField: "sellerId",      // auction.sellerId (string userId)
+          foreignField: "userId",      // users.userId (string)
+          as: "seller"
+        }
+      },
+      { $addFields: { seller: { $first: "$seller" } } },
+
+      // Lookup lots (ObjectId refs)
+      {
+        $lookup: {
+          from: "lots",
+          localField: "lots",          // ObjectId[] in auction
+          foreignField: "_id",
+          as: "lots",
+          pipeline: [
+            { $project: { _id: 0, lotId: 1, lotName: 1, currentBid: 1, status: 1 } }
+          ]
+        }
+      },
+
+      // Shape output & drop internal fields you don't want
+      {
+        $project: {
+          __v: 0,
+          // keep all auction fields you need:
+          auctionId: 1,
+          sellerId: 1,
+          auctionName: 1,
+          description: 1,
+          category: 1,
+          startDate: 1,
+          endDate: 1,
+          startTime: 1,
+          endTime: 1,
+          status: 1,
+          totalLots: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          lots: 1,
+          // expose minimal seller info
+          seller: {
+            _id: 1,
+            userId: 1,
+            name: 1,
+            email: 1
+          }
+        }
+      }
     ]);
+
+    // Add a convenience field sellerName at top-level
+    const shaped = auctions.map(a => ({
+      ...a,
+      sellerName: a?.seller?.name || null
+    }));
 
     return res.json({
       success: true,
@@ -68,8 +131,8 @@ export const getAllAuctions = async (req, res) => {
       limit: lim,
       totalPages: Math.ceil(total / lim),
       totalAuctions: total,
-      count: auctions.length,
-      auctions
+      count: shaped.length,
+      auctions: shaped
     });
   } catch (error) {
     console.error("Admin getAllAuctions error:", error);
