@@ -12,6 +12,7 @@ import userRoutes from "./routes/userRoutes.js";
 import auctionRoutes from "./routes/auctionRoutes.js";
 import bidRoutes from "./routes/bidRoutes.js";
 import subscriptionRoutes from "./routes/subscriptionRoutes.js";
+import dashboardRoutes from "./routes/dashboardRoutes.js";
 
 // Initialize app
 const app = express();
@@ -32,6 +33,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/auctions", auctionRoutes);
 app.use("/api/bids", bidRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
+app.use("/api", dashboardRoutes);
 
 // Default route
 app.get("/", (_req, res) => {
