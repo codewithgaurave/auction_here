@@ -1,18 +1,20 @@
-// routes/userRoutes.js
 import express from "express";
 import {
   registerUser,
   loginUser,
   getUserProfile,
+  getCurrentUserProfile,
   listUsers,
   updateUserStatus,
   checkRegistrationStatus,
   getUsersByStatus,
   getDashboardStats,
   updateUserProfile,
-  deleteUser
+  deleteUser,
+  getUserDetailedActivity
 } from "../controllers/userController.js";
 import { uploadUserFields } from "../config/cloudinary.js";
+import { authenticateToken } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -20,6 +22,11 @@ const router = express.Router();
 router.post("/register", uploadUserFields, registerUser);
 router.post("/login", loginUser);
 router.get("/status/:userId", checkRegistrationStatus);
+
+// Protected user routes (require authentication)
+router.get("/me", authenticateToken, getCurrentUserProfile);
+router.put("/me", authenticateToken, uploadUserFields, updateUserProfile);
+router.get("/activity/:userId", getUserDetailedActivity);
 
 // Admin routes
 router.get("/profile/:userId", getUserProfile);

@@ -6,6 +6,9 @@ import Auction from "../models/Auction.js";
 import Bid from "../models/Bid.js";
 import { cloudinary } from "../config/cloudinary.js";
 
+// ⬇️ Notification service
+import { sendUserApprovalNotification } from "../services/realtimeService.js";
+
 // ✅ Dynamically generate JWT secret
 const generateJWTSecret = () => {
   const base = process.env.MONGO_URI || "default_secret";
@@ -493,6 +496,17 @@ export const updateUserStatus = async (req, res) => {
     // Get updated activity stats
     const activityStats = await getUserActivityStats(userId);
 
+    // ⬇️ Send notification if user is approved
+    if (registrationStatus === 'approved') {
+      sendUserApprovalNotification({
+        name: user.name,
+        email: user.email,
+        phone: user.phone
+      }).catch(err => {
+        console.error('User approval notification error:', err);
+      });
+    }
+
     return res.json({
       message: `User status updated to ${registrationStatus}`,
       user: {
@@ -621,6 +635,32 @@ export const getDashboardStats = async (req, res) => {
         totalAuctions,
         totalBids,
         activeAuctions
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ 
+      message: "Server error", 
+      error: err.message 
+    });
+  }
+};
+
+// ✅ Get Current User Profile (Token-based authentication)
+export const getCurrentUserProfile = async (req, res) => {
+  try {
+    const user = await User.findOne({ userId: req.user.userId }).select("-password -token");
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    // Get user activity stats
+    const activityStats = await getUserActivityStats(req.user.userId);
+
+    return res.json({ 
+      user: {
+        ...user.toObject(),
+        activityStats
       }
     });
   } catch (err) {

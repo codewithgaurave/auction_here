@@ -1,0 +1,2 @@
+npm install socket.io nodemailer twilio
+npm install --save-dev @types/socket.io

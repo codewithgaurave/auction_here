@@ -7,6 +7,9 @@ import User from "../models/User.js";
 // ⬇️ Subscription quota hooks
 import { hasBidQuota, consumeBidQuota } from "../services/subscriptionQuota.js";
 
+// ⬇️ Real-time and notification services
+import { broadcastBidUpdate, handleBidNotifications } from "../services/realtimeService.js";
+
 // ID generator
 const generateBidId = () =>
   "BID" + Math.random().toString(36).substr(2, 9).toUpperCase();
@@ -169,6 +172,39 @@ export const placeBid = async (req, res) => {
       status: "valid"
     });
     await bidDoc.save();
+
+    // ⬇️ Real-time bid update and notifications
+    const io = req.app.get('io');
+    if (io) {
+      // Get previous bidder for notification
+      const previousBidder = lot.bids && lot.bids.length > 1 
+        ? lot.bids[lot.bids.length - 2] 
+        : null;
+
+      // Broadcast real-time update
+      broadcastBidUpdate(io, {
+        lotId: lot.lotId,
+        auctionId: lot.auctionId,
+        amount: Number(amount),
+        bidderName: user.name,
+        createdAt: bidDoc.createdAt,
+        totalBids: lot.bids.length
+      });
+
+      // Send notifications (async, don't wait)
+      handleBidNotifications({
+        lotId: lot.lotId,
+        lotName: lot.lotName,
+        auctionId: lot.auctionId,
+        auctionName: auction.auctionName,
+        amount: Number(amount),
+        bidderName: user.name,
+        sellerId: lot.sellerId,
+        createdAt: bidDoc.createdAt
+      }, previousBidder).catch(err => {
+        console.error('Notification error:', err);
+      });
+    }
 
     const reserveMet = Number(amount) >= Number(lot.reservePrice);
 
