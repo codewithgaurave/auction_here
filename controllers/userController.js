@@ -425,7 +425,19 @@ export const getUserProfile = async (req, res) => {
 
     return res.json({ 
       user: {
-        ...user.toObject(),
+        userId: user.userId,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        city: user.city,
+        userType: user.userType,
+        organizationType: user.organizationType,
+        otherOrgType: user.otherOrgType,
+        profilePhoto: user.profilePhoto,
+        documents: user.documents,
+        registrationStatus: user.registrationStatus,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
         activityStats
       }
     });
@@ -659,7 +671,19 @@ export const getCurrentUserProfile = async (req, res) => {
 
     return res.json({ 
       user: {
-        ...user.toObject(),
+        userId: user.userId,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        city: user.city,
+        userType: user.userType,
+        organizationType: user.organizationType,
+        otherOrgType: user.otherOrgType,
+        profilePhoto: user.profilePhoto,
+        documents: user.documents,
+        registrationStatus: user.registrationStatus,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
         activityStats
       }
     });
