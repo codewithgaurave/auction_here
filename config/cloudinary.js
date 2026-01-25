@@ -75,20 +75,38 @@ const uploadUserFiles = multer({
     fileSize: 10 * 1024 * 1024, // 10MB
   },
   fileFilter: (req, file, cb) => {
+    console.log('File being uploaded:', file.originalname, 'MIME type:', file.mimetype);
+    
+    // Allow all common image and document types
     const allowedMimeTypes = [
+      // Images
       'image/jpeg',
       'image/jpg', 
       'image/png',
       'image/webp',
+      'image/gif',
+      'image/bmp',
+      'image/tiff',
+      // Documents
       'application/pdf',
       'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain',
+      // Mobile camera images (sometimes have different MIME types)
+      'image/x-png',
+      'image/pjpeg'
     ];
 
-    if (allowedMimeTypes.includes(file.mimetype)) {
+    // Also check file extension as fallback
+    const allowedExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.pdf', '.doc', '.docx', '.txt'];
+    const fileExtension = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf('.'));
+    
+    if (allowedMimeTypes.includes(file.mimetype) || allowedExtensions.includes(fileExtension)) {
+      console.log('✅ File accepted:', file.originalname);
       cb(null, true);
     } else {
-      cb(new Error('Invalid file type. Only images and documents are allowed.'), false);
+      console.log('❌ File rejected:', file.originalname, 'MIME:', file.mimetype, 'Extension:', fileExtension);
+      cb(new Error(`Invalid file type: ${file.mimetype}. Only images and documents are allowed.`), false);
     }
   }
 });
