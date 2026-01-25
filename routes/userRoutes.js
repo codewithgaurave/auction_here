@@ -4,6 +4,7 @@ import {
   loginUser,
   getUserProfile,
   getCurrentUserProfile,
+  updateCurrentUserProfile,
   listUsers,
   updateUserStatus,
   checkRegistrationStatus,
@@ -25,7 +26,7 @@ router.get("/status/:userId", checkRegistrationStatus);
 
 // Protected user routes (require authentication)
 router.get("/me", authenticateToken, getCurrentUserProfile);
-router.put("/me", authenticateToken, uploadUserFields, updateUserProfile);
+router.put("/me", authenticateToken, uploadUserFields, updateCurrentUserProfile);
 router.get("/activity/:userId", getUserDetailedActivity);
 
 // Admin routes

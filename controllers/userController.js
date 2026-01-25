@@ -696,6 +696,89 @@ export const getCurrentUserProfile = async (req, res) => {
   }
 };
 
+// ✅ Update Current User Profile (Token-based authentication)
+export const updateCurrentUserProfile = async (req, res) => {
+  let uploadedFiles = null;
+
+  try {
+    const updateData = req.body;
+    uploadedFiles = req.files;
+
+    const user = await User.findOne({ userId: req.user.userId });
+    if (!user) {
+      if (uploadedFiles) {
+        await deleteUploadedFiles(uploadedFiles);
+      }
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    // Handle profile photo update
+    if (req.files && req.files["profilePhoto"]) {
+      // Delete old profile photo from Cloudinary
+      if (user.profilePhoto) {
+        try {
+          const publicId = user.profilePhoto.split('/').pop().split('.')[0];
+          await cloudinary.uploader.destroy(`auction_users/${publicId}`);
+        } catch (error) {
+          console.error('Error deleting old profile photo:', error);
+        }
+      }
+      updateData.profilePhoto = req.files["profilePhoto"][0].path;
+    }
+
+    // Handle document updates
+    if (req.files) {
+      const docFields = ["pan", "aadhar", "gst", "deed", "moa", "aoa", "coi", "cpan", "rcer", "otherDoc"];
+      docFields.forEach(field => {
+        if (req.files[field]) {
+          // Delete old document from Cloudinary if exists
+          if (user.documents && user.documents[field]) {
+            try {
+              const publicId = user.documents[field].split('/').pop().split('.')[0];
+              cloudinary.uploader.destroy(`auction_users/${publicId}`);
+            } catch (error) {
+              console.error(`Error deleting old ${field}:`, error);
+            }
+          }
+          
+          if (!updateData.documents) updateData.documents = {};
+          updateData.documents[field] = req.files[field][0].path;
+        }
+      });
+    }
+
+    updateData.updatedAt = new Date();
+
+    const updatedUser = await User.findOneAndUpdate(
+      { userId: req.user.userId },
+      updateData,
+      { new: true }
+    ).select("-password -token");
+
+    // Get updated activity stats
+    const activityStats = await getUserActivityStats(req.user.userId);
+
+    return res.json({
+      message: "Profile updated successfully",
+      user: {
+        ...updatedUser.toObject(),
+        activityStats
+      }
+    });
+
+  } catch (err) {
+    if (uploadedFiles) {
+      await deleteUploadedFiles(uploadedFiles);
+    }
+    
+    console.error(err);
+    return res.status(500).json({ 
+      message: "Server error during profile update", 
+      error: err.message 
+    });
+  }
+};
+
 // ✅ Get User Detailed Activity (New endpoint for detailed user activity)
 export const getUserDetailedActivity = async (req, res) => {
   try {
