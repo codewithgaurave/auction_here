@@ -303,7 +303,7 @@ export const listBidsForLot = async (req, res) => {
 
 /**
  * GET /api/bids/my
- * Auth required – bidder's own bids
+ * Auth required – bidder's own bids with detailed info
  * Query: ?page=1&limit=20
  */
 export const getMyBids = async (req, res) => {
@@ -311,12 +311,63 @@ export const getMyBids = async (req, res) => {
     const { page = 1, limit = 20 } = req.query;
     const skip = (page - 1) * limit;
 
+    // Get bids with auction and lot details using aggregation
     const [bids, total] = await Promise.all([
-      Bid.find({ bidderId: req.user.userId })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit))
-        .select("-_id bidId lotId auctionId amount status createdAt"),
+      Bid.aggregate([
+        { $match: { bidderId: req.user.userId } },
+        { $sort: { createdAt: -1 } },
+        { $skip: skip },
+        { $limit: parseInt(limit) },
+        
+        // Join with lots to get lot details
+        {
+          $lookup: {
+            from: "lots",
+            localField: "lotId",
+            foreignField: "lotId",
+            as: "lot"
+          }
+        },
+        { $addFields: { lot: { $first: "$lot" } } },
+        
+        // Join with auctions to get auction details
+        {
+          $lookup: {
+            from: "auctions",
+            localField: "auctionId",
+            foreignField: "auctionId",
+            as: "auction"
+          }
+        },
+        { $addFields: { auction: { $first: "$auction" } } },
+        
+        // Project the fields we need
+        {
+          $project: {
+            _id: 0,
+            bidId: 1,
+            lotId: 1,
+            auctionId: 1,
+            amount: 1,
+            status: 1,
+            createdAt: 1,
+            auctionName: "$auction.auctionName",
+            auctionStatus: "$auction.status",
+            auctionEndDate: "$auction.endDate",
+            lotName: "$lot.lotName",
+            category: "$lot.category",
+            currentHighestBid: "$lot.currentBid",
+            currentBidder: "$lot.currentBidder",
+            isWinning: {
+              $cond: {
+                if: { $eq: ["$lot.currentBidder", req.user.userId] },
+                then: true,
+                else: false
+              }
+            }
+          }
+        }
+      ]),
       Bid.countDocuments({ bidderId: req.user.userId })
     ]);
 
