@@ -74,7 +74,180 @@ const dayBucketStage = (dateField, tzShift) => ([
 
 const money = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
 
-/* ----------------------- MAIN: Admin dashboard ----------------------- */
+/* ----------------------- USER: User dashboard ----------------------- */
+/**
+ * GET /api/dashboard/user
+ * Auth: required (user)
+ * 
+ * Response:
+ * {
+ *   success: true,
+ *   userType: "Buyer" | "Seller" | "Seller & Buyer Both",
+ *   summary: {...},         // user-specific metrics
+ *   auctions: {...},        // seller data (if applicable)
+ *   bids: {...},            // buyer data (if applicable)
+ *   subscription: {...}     // current subscription info
+ * }
+ */
+export const getUserDashboard = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    
+    // Get user details
+    const user = await User.findOne({ userId }).select("userId name email userType registrationStatus");
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    // Get current active subscription
+    const activeSubscription = await UserSubscription.findOne({
+      userId: userId,
+      status: "active",
+      startDate: { $lte: now },
+      endDate: { $gt: now },
+    }).sort({ createdAt: -1 });
+
+    let subscriptionInfo = null;
+    if (activeSubscription) {
+      subscriptionInfo = {
+        planName: activeSubscription.planSnapshot.name,
+        endDate: activeSubscription.endDate,
+        remainingDays: Math.ceil((activeSubscription.endDate - now) / (1000 * 60 * 60 * 24)),
+        remainingAuctions: activeSubscription.remainingAuctions,
+        remainingBids: activeSubscription.remainingBids,
+        status: activeSubscription.status
+      };
+    }
+
+    let summary = {
+      totalAuctions: 0,
+      activeAuctions: 0,
+      totalBids: 0,
+      wonAuctions: 0,
+      totalEarnings: 0
+    };
+
+    let auctionData = null;
+    let bidData = null;
+
+    // If user is a seller or both
+    if (user.userType === "Seller" || user.userType === "Seller & Buyer Both") {
+      const [auctionStats, recentAuctions] = await Promise.all([
+        Auction.aggregate([
+          { $match: { sellerId: userId } },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              active: {
+                $sum: {
+                  $cond: [{ $in: ["$status", ["upcoming", "live"]] }, 1, 0]
+                }
+              },
+              completed: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "completed"] }, 1, 0]
+                }
+              }
+            }
+          }
+        ]),
+        Auction.find({ sellerId: userId })
+          .sort({ createdAt: -1 })
+          .limit(5)
+          .select("auctionId auctionName status startDate endDate totalLots")
+      ]);
+
+      const stats = auctionStats[0] || { total: 0, active: 0, completed: 0 };
+      summary.totalAuctions = stats.total;
+      summary.activeAuctions = stats.active;
+
+      auctionData = {
+        stats: {
+          total: stats.total,
+          active: stats.active,
+          completed: stats.completed
+        },
+        recent: recentAuctions
+      };
+    }
+
+    // If user is a buyer or both
+    if (user.userType === "Buyer" || user.userType === "Seller & Buyer Both") {
+      const [bidStats, recentBids, wonAuctions] = await Promise.all([
+        Bid.aggregate([
+          { $match: { bidderId: userId, status: "valid" } },
+          {
+            $group: {
+              _id: null,
+              totalBids: { $sum: 1 },
+              totalAmount: { $sum: "$amount" },
+              uniqueLots: { $addToSet: "$lotId" }
+            }
+          },
+          {
+            $project: {
+              totalBids: 1,
+              totalAmount: 1,
+              uniqueLots: { $size: "$uniqueLots" }
+            }
+          }
+        ]),
+        Bid.find({ bidderId: userId, status: "valid" })
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .select("bidId lotId auctionId amount createdAt")
+          .populate({
+            path: 'lotId',
+            select: 'lotName currentBid status',
+            model: 'Lot',
+            localField: 'lotId',
+            foreignField: 'lotId'
+          }),
+        // Count won auctions (where user is current highest bidder on sold lots)
+        Lot.countDocuments({
+          currentBidder: userId,
+          status: "sold"
+        })
+      ]);
+
+      const stats = bidStats[0] || { totalBids: 0, totalAmount: 0, uniqueLots: 0 };
+      summary.totalBids = stats.totalBids;
+      summary.wonAuctions = wonAuctions;
+
+      bidData = {
+        stats: {
+          totalBids: stats.totalBids,
+          totalAmount: money(stats.totalAmount),
+          uniqueLots: stats.uniqueLots,
+          wonAuctions: wonAuctions
+        },
+        recent: recentBids
+      };
+    }
+
+    return res.json({
+      success: true,
+      user: {
+        userId: user.userId,
+        name: user.name,
+        email: user.email,
+        userType: user.userType,
+        registrationStatus: user.registrationStatus
+      },
+      summary,
+      auctions: auctionData,
+      bids: bidData,
+      subscription: subscriptionInfo
+    });
+  } catch (err) {
+    console.error("getUserDashboard error:", err);
+    return res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+};
 /**
  * GET /api/admin/dashboard/overview?range=30d&tzOffsetMinutes=330
  *
