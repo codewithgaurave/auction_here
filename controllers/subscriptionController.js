@@ -247,6 +247,7 @@ export const listPlansPublic = async (req, res) => {
     if (userType) filter.userType = userType;
     const plans = await SubscriptionPlan.find(filter).sort({
       userType: 1,
+      tier: 1,
       price: 1,
     });
     return res.json({ success: true, count: plans.length, plans });
