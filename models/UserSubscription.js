@@ -31,12 +31,20 @@ const userSubscriptionSchema = new mongoose.Schema({
   startDate: { type: Date, required: true },
   endDate: { type: Date, required: true },
 
-  status: { type: String, enum: ["active", "expired", "cancelled"], default: "active" },
+  status: { type: String, enum: ["active", "expired", "cancelled", "upgraded"], default: "active" },
 
   // purchase/payment meta
   paymentRef: { type: String },
   createdBy: { type: String, enum: ["user", "admin"], default: "user" },
   createdByAdminId: { type: String },
+
+  // Upgrade tracking
+  upgradedFrom: { type: String }, // previous userSubId if this is an upgrade
+  upgradedTo: { type: String },   // new userSubId if this was upgraded
+  upgradeDate: { type: Date },
+  
+  // Plan hierarchy for upgrade validation
+  planTier: { type: Number, default: 1 }, // 1=Basic, 2=Pro, 3=Premium, etc.
 
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
@@ -44,6 +52,7 @@ const userSubscriptionSchema = new mongoose.Schema({
 
 userSubscriptionSchema.index({ userId: 1, status: 1 });
 userSubscriptionSchema.index({ planId: 1 });
+userSubscriptionSchema.index({ userId: 1, planTier: 1 });
 
 const UserSubscription = mongoose.model("UserSubscription", userSubscriptionSchema);
 export default UserSubscription;

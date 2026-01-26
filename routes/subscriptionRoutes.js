@@ -11,6 +11,8 @@ import {
   listPlansPublic,
   purchasePlan,
   getMyActiveSubscription,
+  getAvailableUpgrades,
+  upgradeSubscription,
   listAllPurchases 
 } from "../controllers/subscriptionController.js";
 
@@ -22,6 +24,8 @@ router.get("/plans", optionalAuth, listPlansPublic);
 /* ----- USER: purchase & view active ----- */
 router.post("/purchase", authenticateToken, purchasePlan);
 router.get("/my/active", authenticateToken, getMyActiveSubscription);
+router.get("/my/upgrades", authenticateToken, getAvailableUpgrades);
+router.post("/upgrade", authenticateToken, upgradeSubscription);
 
 /* ----- ADMIN: full plan management ----- */
 router.post("/admin/plans", authenticateAdmin, createPlan);
@@ -31,6 +35,5 @@ router.patch("/admin/plans/:planId", authenticateAdmin, updatePlan);
 router.delete("/admin/plans/:planId", authenticateAdmin, deletePlan);
 // ADMIN: all purchases (user subscriptions)
 router.get("/admin/purchases", authenticateAdmin, listAllPurchases);
-
 
 export default router;

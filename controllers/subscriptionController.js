@@ -58,6 +58,7 @@ export const createPlan = async (req, res) => {
       durationDays,
       features = [],
       isActive, // optional boolean
+      tier = 1, // plan tier for upgrade hierarchy
       code, // optional unique code, if your model supports it
     } = req.body;
 
@@ -99,6 +100,7 @@ export const createPlan = async (req, res) => {
       price: Number(price),
       currency,
       durationDays: Number(durationDays),
+      tier: Number(tier),
       features: Array.isArray(features) ? features : [],
       sellerAuctionLimit, // null => unlimited; undefined avoided so it persists
       buyerBidLimit, // null => unlimited
@@ -288,6 +290,40 @@ export const purchasePlan = async (req, res) => {
       });
     }
 
+    // Check if user already has this exact plan active
+    const existingActiveSub = await UserSubscription.findOne({
+      userId: user.userId,
+      planId: planId,
+      status: "active",
+      endDate: { $gt: new Date() }
+    });
+
+    if (existingActiveSub) {
+      // Get available upgrade plans
+      const availableUpgrades = await SubscriptionPlan.find({
+        userType: plan.userType,
+        status: "active",
+        tier: { $gt: plan.tier },
+        _id: { $ne: plan._id }
+      }).sort({ tier: 1, price: 1 });
+
+      return res.status(400).json({
+        success: false,
+        message: "You already have this plan active. You can upgrade to a higher plan instead.",
+        currentPlan: {
+          name: existingActiveSub.planSnapshot.name,
+          endDate: existingActiveSub.endDate
+        },
+        availableUpgrades: availableUpgrades.map(p => ({
+          planId: p.planId,
+          name: p.name,
+          price: p.price,
+          tier: p.tier,
+          features: p.features
+        }))
+      });
+    }
+
     // Expire any current active subs
     await UserSubscription.updateMany(
       { userId: user.userId, status: "active", endDate: { $gte: new Date() } },
@@ -347,6 +383,7 @@ export const purchasePlan = async (req, res) => {
       status: "active",
       paymentRef: paymentRef || "",
       createdBy: "user",
+      planTier: plan.tier
     });
 
     await userSub.save();
@@ -381,6 +418,226 @@ export const getMyActiveSubscription = async (req, res) => {
     return res
       .status(500)
       .json({ success: false, message: "Error", error: err.message });
+  }
+};
+
+/* -------------------- USER: get available upgrades -------------------- */
+export const getAvailableUpgrades = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const now = new Date();
+    
+    // Get current active subscription
+    const currentSub = await UserSubscription.findOne({
+      userId: userId,
+      status: "active",
+      startDate: { $lte: now },
+      endDate: { $gt: now },
+    }).sort({ createdAt: -1 });
+
+    if (!currentSub) {
+      return res.status(404).json({
+        success: false,
+        message: "No active subscription found"
+      });
+    }
+
+    // Get current plan details
+    const currentPlan = await SubscriptionPlan.findOne({ planId: currentSub.planId });
+    if (!currentPlan) {
+      return res.status(404).json({
+        success: false,
+        message: "Current plan not found"
+      });
+    }
+
+    // Find available upgrade plans (higher tier, same userType)
+    const availableUpgrades = await SubscriptionPlan.find({
+      userType: currentPlan.userType,
+      status: "active",
+      tier: { $gt: currentPlan.tier },
+      _id: { $ne: currentPlan._id }
+    }).sort({ tier: 1, price: 1 });
+
+    return res.json({
+      success: true,
+      currentSubscription: {
+        userSubId: currentSub.userSubId,
+        planName: currentSub.planSnapshot.name,
+        tier: currentPlan.tier,
+        endDate: currentSub.endDate,
+        remainingDays: Math.ceil((currentSub.endDate - now) / (1000 * 60 * 60 * 24))
+      },
+      availableUpgrades: availableUpgrades.map(plan => ({
+        planId: plan.planId,
+        name: plan.name,
+        description: plan.description,
+        price: plan.price,
+        tier: plan.tier,
+        durationDays: plan.durationDays,
+        features: plan.features,
+        sellerAuctionLimit: plan.sellerAuctionLimit,
+        buyerBidLimit: plan.buyerBidLimit
+      }))
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: "Error getting available upgrades",
+      error: err.message
+    });
+  }
+};
+
+/* -------------------- USER: upgrade subscription -------------------- */
+export const upgradeSubscription = async (req, res) => {
+  try {
+    const { planId, paymentRef } = req.body;
+    const userId = req.user.userId;
+    const now = new Date();
+
+    const user = await User.findOne({ userId });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // Get current active subscription
+    const currentSub = await UserSubscription.findOne({
+      userId: userId,
+      status: "active",
+      startDate: { $lte: now },
+      endDate: { $gt: now },
+    }).sort({ createdAt: -1 });
+
+    if (!currentSub) {
+      return res.status(404).json({
+        success: false,
+        message: "No active subscription found to upgrade"
+      });
+    }
+
+    // Get new plan details
+    const newPlan = await SubscriptionPlan.findOne({ planId, status: "active" });
+    if (!newPlan) {
+      return res.status(404).json({
+        success: false,
+        message: "Upgrade plan not found"
+      });
+    }
+
+    // Get current plan details
+    const currentPlan = await SubscriptionPlan.findOne({ planId: currentSub.planId });
+    if (!currentPlan) {
+      return res.status(404).json({
+        success: false,
+        message: "Current plan not found"
+      });
+    }
+
+    // Validate upgrade eligibility
+    if (newPlan.userType !== currentPlan.userType) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot upgrade to a plan with different user type"
+      });
+    }
+
+    if (newPlan.tier <= currentPlan.tier) {
+      return res.status(400).json({
+        success: false,
+        message: "Can only upgrade to higher tier plans"
+      });
+    }
+
+    // Calculate remaining days and prorated credit
+    const remainingDays = Math.ceil((currentSub.endDate - now) / (1000 * 60 * 60 * 24));
+    const dailyCurrentPlanCost = currentSub.planSnapshot.price / currentSub.planSnapshot.durationDays;
+    const remainingCredit = dailyCurrentPlanCost * remainingDays;
+    
+    // Calculate upgrade cost (simplified - in real app, implement proper proration)
+    const upgradeCost = Math.max(0, newPlan.price - remainingCredit);
+
+    // Mark current subscription as upgraded
+    currentSub.status = "upgraded";
+    currentSub.upgradedTo = genUserSubId(); // Generate new subscription ID
+    currentSub.upgradeDate = now;
+    currentSub.updatedAt = now;
+    await currentSub.save();
+
+    // Create new subscription (extends from current end date or starts now, whichever is later)
+    const upgradeStartDate = new Date(Math.max(now.getTime(), currentSub.endDate.getTime()));
+    const upgradeEndDate = new Date(upgradeStartDate);
+    upgradeEndDate.setDate(upgradeEndDate.getDate() + Number(newPlan.durationDays));
+
+    // Plan limits → remaining counters
+    const planSellerLimit = newPlan.sellerAuctionLimit === undefined ? null : toNumOrNull(newPlan.sellerAuctionLimit);
+    const planBuyerLimit = newPlan.buyerBidLimit === undefined ? null : toNumOrNull(newPlan.buyerBidLimit);
+
+    let remainingAuctions = null;
+    let remainingBids = null;
+
+    if (newPlan.userType === "Seller") {
+      remainingAuctions = planSellerLimit;
+      remainingBids = null;
+    } else if (newPlan.userType === "Buyer") {
+      remainingAuctions = null;
+      remainingBids = planBuyerLimit;
+    } else {
+      remainingAuctions = planSellerLimit;
+      remainingBids = planBuyerLimit;
+    }
+
+    // Create upgraded subscription
+    const upgradedSub = new UserSubscription({
+      userSubId: currentSub.upgradedTo,
+      userId: user.userId,
+      userType: user.userType,
+      planId: newPlan.planId,
+      planSnapshot: {
+        name: newPlan.name,
+        description: newPlan.description,
+        userType: newPlan.userType,
+        price: newPlan.price,
+        currency: newPlan.currency,
+        durationDays: newPlan.durationDays,
+        features: newPlan.features,
+        sellerAuctionLimit: planSellerLimit,
+        buyerBidLimit: planBuyerLimit,
+      },
+      remainingAuctions,
+      remainingBids,
+      startDate: upgradeStartDate,
+      endDate: upgradeEndDate,
+      status: "active",
+      paymentRef: paymentRef || "",
+      createdBy: "user",
+      planTier: newPlan.tier,
+      upgradedFrom: currentSub.userSubId
+    });
+
+    await upgradedSub.save();
+
+    return res.status(201).json({
+      success: true,
+      message: "Subscription upgraded successfully",
+      upgrade: {
+        previousSubscription: {
+          userSubId: currentSub.userSubId,
+          planName: currentSub.planSnapshot.name,
+          endDate: currentSub.endDate
+        },
+        newSubscription: upgradedSub,
+        upgradeCost: upgradeCost,
+        remainingCredit: remainingCredit,
+        effectiveDate: upgradeStartDate
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: "Error upgrading subscription",
+      error: err.message
+    });
   }
 };
 
