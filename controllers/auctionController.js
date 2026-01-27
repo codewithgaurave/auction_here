@@ -396,7 +396,10 @@ export const getActiveAuctions = async (req, res) => {
         .sort({ startDate: 1 })
         .skip(skip)
         .limit(lim)
-        .populate("lots", "lotName startPrice currentBid images")
+        .populate({
+          path: "lots",
+          select: "lotName startPrice reservePrice currentBid images minIncrement"
+        })
         .select("auctionId auctionName category startDate endDate status totalLots"),
       Auction.countDocuments(filter)
     ]);
@@ -440,6 +443,23 @@ export const updateAuctionStatus = async (req, res) => {
       });
     }
 
+    // Validate status transitions
+    const now = new Date();
+    if (status === "live") {
+      if (now < auction.startDate) {
+        return res.status(400).json({
+          success: false,
+          message: "Cannot start auction before scheduled start time"
+        });
+      }
+      if (auction.totalLots === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Cannot start auction without any lots"
+        });
+      }
+    }
+
     auction.status = status;
     auction.updatedAt = new Date();
     await auction.save();
@@ -458,6 +478,153 @@ export const updateAuctionStatus = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Server error while updating auction status",
+      error: error.message
+    });
+  }
+};
+
+// ✅ Auto Update Auction Status Based on Time
+export const autoUpdateAuctionStatus = async () => {
+  try {
+    const now = new Date();
+    
+    // Start upcoming auctions
+    await Auction.updateMany(
+      {
+        status: "upcoming",
+        startDate: { $lte: now },
+        totalLots: { $gt: 0 }
+      },
+      {
+        $set: { status: "live", updatedAt: now }
+      }
+    );
+
+    // End live auctions
+    await Auction.updateMany(
+      {
+        status: "live",
+        endDate: { $lte: now }
+      },
+      {
+        $set: { status: "completed", updatedAt: now }
+      }
+    );
+
+    console.log("Auction statuses updated automatically");
+  } catch (error) {
+    console.error("Auto update auction status error:", error);
+  }
+};
+
+// ✅ Start Auction Manually (Enhanced)
+export const startAuction = async (req, res) => {
+  try {
+    const { auctionId } = req.params;
+    
+    const auction = await Auction.findOne({ auctionId, sellerId: req.user.userId });
+    if (!auction) {
+      return res.status(404).json({
+        success: false,
+        message: "Auction not found or access denied"
+      });
+    }
+
+    if (auction.status !== "upcoming") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot start auction with status: ${auction.status}`
+      });
+    }
+
+    if (auction.totalLots === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot start auction without any lots"
+      });
+    }
+
+    const now = new Date();
+    if (now < auction.startDate) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot start auction before scheduled start time"
+      });
+    }
+
+    auction.status = "live";
+    auction.updatedAt = now;
+    await auction.save();
+
+    return res.json({
+      success: true,
+      message: "Auction started successfully",
+      auction: {
+        auctionId: auction.auctionId,
+        auctionName: auction.auctionName,
+        status: auction.status,
+        totalLots: auction.totalLots
+      }
+    });
+  } catch (error) {
+    console.error("Start auction error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while starting auction",
+      error: error.message
+    });
+  }
+};
+
+// ✅ End Auction Manually
+export const endAuction = async (req, res) => {
+  try {
+    const { auctionId } = req.params;
+    
+    const auction = await Auction.findOne({ auctionId, sellerId: req.user.userId });
+    if (!auction) {
+      return res.status(404).json({
+        success: false,
+        message: "Auction not found or access denied"
+      });
+    }
+
+    if (auction.status !== "live") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot end auction with status: ${auction.status}`
+      });
+    }
+
+    // Update lot statuses based on bids
+    const lots = await Lot.find({ auctionId });
+    for (const lot of lots) {
+      if (lot.currentBid >= lot.reservePrice && lot.currentBidder) {
+        lot.status = "sold";
+      } else {
+        lot.status = "unsold";
+      }
+      await lot.save();
+    }
+
+    auction.status = "completed";
+    auction.updatedAt = new Date();
+    await auction.save();
+
+    return res.json({
+      success: true,
+      message: "Auction ended successfully",
+      auction: {
+        auctionId: auction.auctionId,
+        auctionName: auction.auctionName,
+        status: auction.status
+      }
+    });
+  } catch (error) {
+    console.error("End auction error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while ending auction",
       error: error.message
     });
   }

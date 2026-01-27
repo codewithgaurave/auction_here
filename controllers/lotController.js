@@ -821,6 +821,7 @@ export const getLotAnalytics = async (req, res) => {
       currentBid: lot.currentBid,
       startPrice: lot.startPrice,
       reservePrice: lot.reservePrice,
+      minIncrement: lot.minIncrement,
       status: lot.status,
       views: 0,
       createdAt: lot.createdAt,
@@ -846,6 +847,104 @@ export const getLotAnalytics = async (req, res) => {
   }
 };
 
+// ✅ Bulk Update Lot Status (Seller Only)
+export const bulkUpdateLotStatus = async (req, res) => {
+  try {
+    const { lotIds, status } = req.body;
+
+    if (!Array.isArray(lotIds) || lotIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "lotIds array is required"
+      });
+    }
+
+    const validStatuses = ["active", "sold", "unsold", "cancelled"];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status"
+      });
+    }
+
+    // Update lots belonging to the seller
+    const result = await Lot.updateMany(
+      {
+        lotId: { $in: lotIds },
+        sellerId: req.user.userId
+      },
+      {
+        $set: {
+          status: status,
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    return res.json({
+      success: true,
+      message: `${result.modifiedCount} lots updated to ${status}`,
+      modifiedCount: result.modifiedCount
+    });
+
+  } catch (error) {
+    console.error("Bulk update lot status error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while updating lot statuses",
+      error: error.message
+    });
+  }
+};
+
+// ✅ Get Lot Bidding Summary (Public)
+export const getLotBiddingSummary = async (req, res) => {
+  try {
+    const { lotId } = req.params;
+
+    const lot = await Lot.findOne({ lotId })
+      .select('lotId lotName currentBid startPrice reservePrice minIncrement status bids');
+
+    if (!lot) {
+      return res.status(404).json({
+        success: false,
+        message: "Lot not found"
+      });
+    }
+
+    const summary = {
+      lotId: lot.lotId,
+      lotName: lot.lotName,
+      currentBid: lot.currentBid,
+      startPrice: lot.startPrice,
+      reservePrice: lot.reservePrice,
+      minIncrement: lot.minIncrement,
+      nextMinimumBid: lot.currentBid + lot.minIncrement,
+      status: lot.status,
+      totalBids: lot.bids.length,
+      reserveMet: lot.currentBid >= lot.reservePrice,
+      bidProgress: {
+        percentage: Math.min(100, (lot.currentBid / lot.reservePrice) * 100),
+        amount: lot.currentBid,
+        target: lot.reservePrice
+      }
+    };
+
+    return res.json({
+      success: true,
+      summary
+    });
+
+  } catch (error) {
+    console.error("Get lot bidding summary error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while fetching lot bidding summary",
+      error: error.message
+    });
+  }
+};
+
 export default {
   getAllLots,
   createLot,
@@ -857,5 +956,7 @@ export default {
   getLotById,
   updateLotStatus,
   searchLots,
-  getLotAnalytics
+  getLotAnalytics,
+  bulkUpdateLotStatus,
+  getLotBiddingSummary
 };

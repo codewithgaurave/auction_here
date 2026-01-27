@@ -85,14 +85,23 @@ export const placeBid = async (req, res) => {
     const startPrice = Number(lot.startPrice);
     const minInc = Number(lot.minIncrement || 0);
 
-    // ✅ First bid vs subsequent bids
+    // ✅ Enhanced bid validation
     const isFirstBid = (Array.isArray(lot.bids) ? lot.bids.length : 0) === 0;
     const minAllowed = isFirstBid ? startPrice : current + minInc;
+    const bidAmount = Number(amount);
 
-    if (Number(amount) < minAllowed) {
+    if (bidAmount < minAllowed) {
       return res.status(400).json({
         success: false,
-        message: `Bid too low. Minimum allowed is ${minAllowed}.`
+        message: `Bid too low. Minimum allowed is ₹${minAllowed}. ${isFirstBid ? 'Starting price' : `Current bid + minimum increment (₹${current} + ₹${minInc})`}`
+      });
+    }
+
+    // Check if user is already the highest bidder
+    if (lot.currentBidder === user.userId) {
+      return res.status(400).json({
+        success: false,
+        message: "You are already the highest bidder on this lot"
       });
     }
 
@@ -106,14 +115,14 @@ export const placeBid = async (req, res) => {
       },
       {
         $set: {
-          currentBid: Number(amount),
+          currentBid: bidAmount,
           currentBidder: user.userId,
           updatedAt: new Date()
         },
         $push: {
           bids: {
             bidderId: user.userId,
-            amount: Number(amount),
+            amount: bidAmount,
             timestamp: new Date()
           }
         }
@@ -125,7 +134,7 @@ export const placeBid = async (req, res) => {
       // Someone else outbid in between
       return res.status(409).json({
         success: false,
-        message: "You were outbid just now. Fetch the latest bid and try again."
+        message: "You were outbid just now. Please refresh and try again with a higher amount."
       });
     }
 
@@ -138,7 +147,7 @@ export const placeBid = async (req, res) => {
         await Lot.findOneAndUpdate(
           {
             lotId,
-            currentBid: Number(amount),
+            currentBid: bidAmount,
             currentBidder: user.userId
           },
           {
@@ -148,7 +157,7 @@ export const placeBid = async (req, res) => {
               updatedAt: new Date()
             },
             $pull: {
-              bids: { bidderId: user.userId, amount: Number(amount) }
+              bids: { bidderId: user.userId, amount: bidAmount }
             }
           }
         );
@@ -168,7 +177,7 @@ export const placeBid = async (req, res) => {
       auctionId: lot.auctionId,
       lotId: lot.lotId,
       bidderId: user.userId,
-      amount: Number(amount),
+      amount: bidAmount,
       status: "valid"
     });
     await bidDoc.save();
@@ -185,10 +194,10 @@ export const placeBid = async (req, res) => {
       broadcastBidUpdate(io, {
         lotId: lot.lotId,
         auctionId: lot.auctionId,
-        amount: Number(amount),
+        amount: bidAmount,
         bidderName: user.name,
         createdAt: bidDoc.createdAt,
-        totalBids: lot.bids.length
+        totalBids: updatedLot.bids.length
       });
 
       // Send notifications (async, don't wait)
@@ -197,7 +206,7 @@ export const placeBid = async (req, res) => {
         lotName: lot.lotName,
         auctionId: lot.auctionId,
         auctionName: auction.auctionName,
-        amount: Number(amount),
+        amount: bidAmount,
         bidderName: user.name,
         sellerId: lot.sellerId,
         createdAt: bidDoc.createdAt
@@ -206,11 +215,12 @@ export const placeBid = async (req, res) => {
       });
     }
 
-    const reserveMet = Number(amount) >= Number(lot.reservePrice);
+    const reserveMet = bidAmount >= Number(lot.reservePrice);
+    const nextMinBid = bidAmount + minInc;
 
     return res.status(201).json({
       success: true,
-      message: "Bid placed successfully",
+      message: `Bid placed successfully! ${reserveMet ? 'Reserve price met.' : 'Reserve price not yet met.'}`,
       bid: {
         bidId: bidDoc.bidId,
         lotId: bidDoc.lotId,
@@ -223,7 +233,10 @@ export const placeBid = async (req, res) => {
       lot: {
         lotId: updatedLot.lotId,
         currentBid: updatedLot.currentBid,
-        currentBidder: updatedLot.currentBidder
+        currentBidder: updatedLot.currentBidder,
+        nextMinimumBid: nextMinBid,
+        reservePrice: updatedLot.reservePrice,
+        totalBids: updatedLot.bids.length
       }
     });
   } catch (error) {
@@ -358,6 +371,7 @@ export const getMyBids = async (req, res) => {
             category: "$lot.category",
             currentHighestBid: "$lot.currentBid",
             currentBidder: "$lot.currentBidder",
+            minIncrement: "$lot.minIncrement",
             isWinning: {
               $cond: {
                 if: { $eq: ["$lot.currentBidder", req.user.userId] },

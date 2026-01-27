@@ -8,6 +8,9 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import connectDB from "./config/db.js";
 
+// Services
+import { startAuctionScheduler } from "./services/auctionScheduler.js";
+
 // Routes
 import adminRoutes from "./routes/adminRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -36,6 +39,9 @@ app.use(cors());
 
 // Connect to MongoDB (startup)
 await connectDB(); // if your connectDB returns a promise; else just call connectDB()
+
+// Start auction scheduler
+startAuctionScheduler();
 
 // API routes
 app.use("/api/admin", adminRoutes);
@@ -97,7 +103,8 @@ io.on('connection', (socket) => {
 app.set('io', io);
 
 // Start server
-const PORT = process.env.PORT || 5001;
+const PORT = process.env.PORT || 5002;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📅 Auction scheduler is active`);
 });

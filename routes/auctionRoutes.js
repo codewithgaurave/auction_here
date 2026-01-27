@@ -8,6 +8,9 @@ import {
   updateAuctionStatus,
   createLot,
   getAllAuctions,
+  startAuction,
+  endAuction,
+  autoUpdateAuctionStatus
 } from "../controllers/auctionController.js";
 
 // ✅ LOT CONTROLLER FUNCTIONS
@@ -17,7 +20,9 @@ import {
   getLotDetails,
   updateLot,
   deleteLot,
-  getMyLots
+  getMyLots,
+  bulkUpdateLotStatus,
+  getLotBiddingSummary
 } from "../controllers/lotController.js";
 
 import { authenticateToken, optionalAuth } from "../middleware/auth.js";
@@ -41,9 +46,12 @@ router.post("/create", createAuction);
 router.post("/:auctionId/lots", uploadLotFields, createLot);
 router.get("/my-auctions", getMyAuctions);
 router.patch("/:auctionId/status", updateAuctionStatus);
+router.post("/:auctionId/start", startAuction);
+router.post("/:auctionId/end", endAuction);
 router.get("/my-lots", getMyLots);
 router.put("/lots/:lotId", uploadLotFields, updateLot);
 router.delete("/lots/:lotId", deleteLot);
+router.patch("/lots/bulk-status", bulkUpdateLotStatus);
 
 /* --------------- MIXED / PUBLIC ----------------- */
 router.get("/:auctionId/details", getAuctionDetails);
@@ -52,5 +60,6 @@ router.get("/:auctionId/details", getAuctionDetails);
 router.get("/active", optionalAuth, getActiveAuctions);
 router.get("/:auctionId/lots", optionalAuth, getLotsByAuction);
 router.get("/lots/:lotId", optionalAuth, getLotDetails);
+router.get("/lots/:lotId/summary", optionalAuth, getLotBiddingSummary);
 
 export default router;
