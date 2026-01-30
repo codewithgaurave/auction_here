@@ -407,12 +407,23 @@ export const purchasePlan = async (req, res) => {
 export const getMyActiveSubscription = async (req, res) => {
   try {
     const now = new Date();
-    const sub = await UserSubscription.findOne({
+    
+    // First, try to find currently active subscription
+    let sub = await UserSubscription.findOne({
       userId: req.user.userId,
       status: "active",
       startDate: { $lte: now },
       endDate: { $gt: now },
     }).sort({ createdAt: -1 });
+
+    // If no active subscription found, check for future active subscriptions (from upgrades)
+    if (!sub) {
+      sub = await UserSubscription.findOne({
+        userId: req.user.userId,
+        status: "active",
+        startDate: { $gt: now }, // Future start date
+      }).sort({ startDate: 1 }); // Get the earliest future subscription
+    }
 
     return res.json({ success: true, subscription: sub || null });
   } catch (err) {
@@ -565,8 +576,8 @@ export const upgradeSubscription = async (req, res) => {
     currentSub.updatedAt = now;
     await currentSub.save();
 
-    // Create new subscription (extends from current end date or starts now, whichever is later)
-    const upgradeStartDate = new Date(Math.max(now.getTime(), currentSub.endDate.getTime()));
+    // Create new subscription (starts immediately for seamless upgrade)
+    const upgradeStartDate = now; // Start immediately
     const upgradeEndDate = new Date(upgradeStartDate);
     upgradeEndDate.setDate(upgradeEndDate.getDate() + Number(newPlan.durationDays));
 
