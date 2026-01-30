@@ -242,15 +242,15 @@ export const loginUser = async (req, res) => {
     // Get user activity stats
     const activityStats = await getUserActivityStats(user.userId);
 
-    // 🔥 Generate JWT Token
+    // 🔥 Generate JWT Token (Never expires)
     const token = jwt.sign(
       { 
         id: user._id, 
         userId: user.userId,
         email: user.email 
       },
-      JWT_SECRET,
-      { expiresIn: "24h" }
+      JWT_SECRET
+      // No expiresIn option = token never expires
     );
 
     // 🔥 Save token in DB
