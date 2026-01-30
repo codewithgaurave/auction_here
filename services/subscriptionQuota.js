@@ -1,15 +1,28 @@
 // services/subscriptionQuota.js
 import UserSubscription from "../models/UserSubscription.js";
 
-/** Get active subscription for user (valid now) */
+/** Get active subscription for user (valid now or future active) */
 export const getActiveSubscription = async (userId) => {
   const now = new Date();
-  return await UserSubscription.findOne({
+  
+  // First try to find currently active subscription
+  let sub = await UserSubscription.findOne({
     userId,
     status: "active",
     startDate: { $lte: now },
     endDate: { $gt: now }
   });
+  
+  // If no current subscription, check for future active subscriptions (from upgrades)
+  if (!sub) {
+    sub = await UserSubscription.findOne({
+      userId,
+      status: "active",
+      startDate: { $gt: now } // Future start date
+    }).sort({ startDate: 1 }); // Get the earliest future subscription
+  }
+  
+  return sub;
 };
 
 /** Check if user has auction quota (>0 or unlimited) */
@@ -68,31 +81,39 @@ export const consumeAuctionQuota = async (userId) => {
 /** Try to decrement bid quota atomically */
 export const consumeBidQuota = async (userId) => {
   const now = new Date();
-  const res = await UserSubscription.findOneAndUpdate(
-    {
-      userId,
-      status: "active",
-      startDate: { $lte: now },
-      endDate: { $gt: now },
-      $or: [{ remainingBids: null }, { remainingBids: { $gt: 0 } }]
-    },
-    {
-      $inc: { remainingBids: 1 * 0 },
-      $set: { updatedAt: new Date() }
-    },
-    { new: true }
-  );
-
-  if (!res) return { ok: false, reason: "No active subscription or bid quota exhausted" };
-
-  if (res.remainingBids == null) return { ok: true };
-
+  
+  // First, get the active subscription to check if it has unlimited bids
+  const activeSub = await getActiveSubscription(userId);
+  if (!activeSub) {
+    return { ok: false, reason: "No active subscription" };
+  }
+  
+  // If unlimited bids (null), no need to consume quota
+  if (activeSub.remainingBids === null) {
+    return { ok: true };
+  }
+  
+  // If limited bids, check and consume
+  if (activeSub.remainingBids <= 0) {
+    return { ok: false, reason: "Bid quota exhausted" };
+  }
+  
+  // Decrement the bid count
   const dec = await UserSubscription.findOneAndUpdate(
-    { userSubId: res.userSubId, remainingBids: { $gt: 0 } },
-    { $inc: { remainingBids: -1 }, $set: { updatedAt: new Date() } },
+    { 
+      userSubId: activeSub.userSubId, 
+      remainingBids: { $gt: 0 } 
+    },
+    { 
+      $inc: { remainingBids: -1 }, 
+      $set: { updatedAt: new Date() } 
+    },
     { new: true }
   );
-  if (!dec) return { ok: false, reason: "Bid quota exhausted" };
+  
+  if (!dec) {
+    return { ok: false, reason: "Bid quota exhausted" };
+  }
 
   return { ok: true };
 };
