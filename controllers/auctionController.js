@@ -329,13 +329,26 @@ export const getMyAuctions = async (req, res) => {
   try {
     const auctions = await Auction.find({ sellerId: req.user.userId })
       .sort({ createdAt: -1 })
-      .populate("lots", "lotName currentBid status")
       .select("-__v");
+
+    // Fetch lots for each auction
+    const auctionsWithLots = await Promise.all(
+      auctions.map(async (auction) => {
+        const lots = await Lot.find({ auctionId: auction.auctionId })
+          .select("lotId lotName currentBid status")
+          .sort({ createdAt: -1 });
+        
+        return {
+          ...auction.toObject(),
+          lots
+        };
+      })
+    );
 
     return res.json({
       success: true,
-      count: auctions.length,
-      auctions
+      count: auctionsWithLots.length,
+      auctions: auctionsWithLots
     });
   } catch (error) {
     console.error("Get my auctions error:", error);
@@ -352,12 +365,7 @@ export const getAuctionDetails = async (req, res) => {
   try {
     const { auctionId } = req.params;
 
-    const auction = await Auction.findOne({ auctionId })
-      .populate({
-        path: "lots",
-        select: "lotId lotName description category startPrice currentBid reservePrice status images",
-        options: { sort: { createdAt: -1 } }
-      });
+    const auction = await Auction.findOne({ auctionId });
 
     if (!auction) {
       return res.status(404).json({
@@ -366,9 +374,46 @@ export const getAuctionDetails = async (req, res) => {
       });
     }
 
+    // Real-time status check
+    const now = new Date();
+    let currentStatus = auction.status;
+    
+    if (auction.status === "upcoming" && now >= auction.startDate && auction.totalLots > 0) {
+      currentStatus = "live";
+      auction.status = "live";
+      auction.updatedAt = now;
+      await auction.save();
+    } else if ((auction.status === "live" || auction.status === "upcoming") && now > auction.endDate) {
+      currentStatus = "completed";
+      auction.status = "completed";
+      auction.updatedAt = now;
+      await auction.save();
+    }
+
+    // Fetch lots separately using auctionId string
+    const lots = await Lot.find({ auctionId, status: { $ne: "cancelled" } })
+      .select("lotId lotName description category quantity unit startPrice currentBid reservePrice minIncrement status images")
+      .sort({ createdAt: -1 });
+
     return res.json({
       success: true,
-      auction
+      auction: {
+        _id: auction._id,
+        auctionId: auction.auctionId,
+        sellerId: auction.sellerId,
+        auctionName: auction.auctionName,
+        description: auction.description,
+        category: auction.category,
+        startDate: auction.startDate,
+        endDate: auction.endDate,
+        startTime: auction.startTime,
+        endTime: auction.endTime,
+        status: currentStatus,
+        totalLots: auction.totalLots,
+        createdAt: auction.createdAt,
+        updatedAt: auction.updatedAt,
+        lots: lots
+      }
     });
   } catch (error) {
     console.error("Get auction details error:", error);
@@ -396,20 +441,55 @@ export const getActiveAuctions = async (req, res) => {
         .sort({ startDate: 1 })
         .skip(skip)
         .limit(lim)
-        .populate({
-          path: "lots",
-          select: "lotName startPrice reservePrice currentBid images minIncrement"
-        })
         .select("auctionId auctionName category startDate endDate status totalLots"),
       Auction.countDocuments(filter)
     ]);
 
+    const now = new Date();
+    
+    // Fetch lots and update status for each auction
+    const auctionsWithLots = await Promise.all(
+      auctions.map(async (auction) => {
+        // Real-time status check
+        let currentStatus = auction.status;
+        
+        if (auction.status === "upcoming" && now >= auction.startDate && auction.totalLots > 0) {
+          currentStatus = "live";
+          await Auction.updateOne({ _id: auction._id }, { status: "live", updatedAt: now });
+        } else if ((auction.status === "live" || auction.status === "upcoming") && now > auction.endDate) {
+          currentStatus = "completed";
+          await Auction.updateOne({ _id: auction._id }, { status: "completed", updatedAt: now });
+        }
+        
+        // Skip completed auctions
+        if (currentStatus === "completed") {
+          return null;
+        }
+        
+        const lots = await Lot.find({ 
+          auctionId: auction.auctionId, 
+          status: { $ne: "cancelled" } 
+        })
+          .select("lotId lotName startPrice reservePrice currentBid images minIncrement")
+          .limit(5);
+        
+        return {
+          ...auction.toObject(),
+          status: currentStatus,
+          lots
+        };
+      })
+    );
+
+    // Filter out null (completed) auctions
+    const activeAuctions = auctionsWithLots.filter(a => a !== null);
+
     return res.json({
       success: true,
       page: pg,
-      totalPages: Math.ceil(total / lim),
-      totalAuctions: total,
-      auctions
+      totalPages: Math.ceil(activeAuctions.length / lim),
+      totalAuctions: activeAuctions.length,
+      auctions: activeAuctions
     });
   } catch (error) {
     console.error("Get active auctions error:", error);
