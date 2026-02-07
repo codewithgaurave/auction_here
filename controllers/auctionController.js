@@ -327,11 +327,19 @@ export const createLot = async (req, res) => {
 // ✅ Get Seller's Auctions with Highest Bidder Details
 export const getMyAuctions = async (req, res) => {
   try {
-    const auctions = await Auction.find({ sellerId: req.user.userId })
+    const { status } = req.query;
+    const filter = { sellerId: req.user.userId };
+    
+    if (status) {
+      filter.status = status;
+    }
+
+    const auctions = await Auction.find(filter)
       .sort({ createdAt: -1 })
       .select("-__v");
 
     const User = (await import('../models/User.js')).default;
+    const Bid = (await import('../models/Bid.js')).default;
 
     // Fetch lots with bidder details for each auction
     const auctionsWithLots = await Promise.all(
@@ -340,10 +348,14 @@ export const getMyAuctions = async (req, res) => {
           .select("lotId lotName currentBid currentBidder status")
           .sort({ createdAt: -1 });
         
-        // Add highest bidder details to each lot
+        // Add highest bidder details and total bids to each lot
         const lotsWithBidders = await Promise.all(
           lots.map(async (lot) => {
             const lotObj = lot.toObject();
+            
+            // Get total bids count
+            const totalBids = await Bid.countDocuments({ lotId: lot.lotId });
+            lotObj.totalBids = totalBids;
             
             if (lot.currentBidder) {
               const bidder = await User.findOne({ userId: lot.currentBidder })
