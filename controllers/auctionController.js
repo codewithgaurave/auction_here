@@ -429,8 +429,41 @@ export const getAuctionDetails = async (req, res) => {
 
     // Fetch lots separately using auctionId string
     const lots = await Lot.find({ auctionId, status: { $ne: "cancelled" } })
-      .select("lotId lotName description category quantity unit startPrice currentBid reservePrice minIncrement status images")
+      .select("lotId lotName description category quantity unit startPrice currentBid reservePrice minIncrement status images currentBidder")
       .sort({ createdAt: -1 });
+
+    const User = (await import('../models/User.js')).default;
+    const Bid = (await import('../models/Bid.js')).default;
+
+    // Add highest bidder details and total bids to each lot
+    const lotsWithBidders = await Promise.all(
+      lots.map(async (lot) => {
+        const lotObj = lot.toObject();
+        
+        // Get total bids count
+        const totalBids = await Bid.countDocuments({ lotId: lot.lotId });
+        lotObj.totalBids = totalBids;
+        
+        if (lot.currentBidder) {
+          const bidder = await User.findOne({ userId: lot.currentBidder })
+            .select('userId name email phone');
+          
+          lotObj.highestBidder = bidder ? {
+            userId: bidder.userId,
+            name: bidder.name,
+            email: bidder.email,
+            phone: bidder.phone
+          } : null;
+        } else {
+          lotObj.highestBidder = null;
+        }
+        
+        // Remove currentBidder field from response
+        delete lotObj.currentBidder;
+        
+        return lotObj;
+      })
+    );
 
     return res.json({
       success: true,
@@ -449,7 +482,7 @@ export const getAuctionDetails = async (req, res) => {
         totalLots: auction.totalLots,
         createdAt: auction.createdAt,
         updatedAt: auction.updatedAt,
-        lots: lots
+        lots: lotsWithBidders
       }
     });
   } catch (error) {
