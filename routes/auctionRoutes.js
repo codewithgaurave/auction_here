@@ -10,7 +10,9 @@ import {
   getAllAuctions,
   startAuction,
   endAuction,
-  autoUpdateAuctionStatus
+  autoUpdateAuctionStatus,
+  deleteAuction,
+  updateAuction
 } from "../controllers/auctionController.js";
 
 // ✅ LOT CONTROLLER FUNCTIONS
@@ -45,6 +47,8 @@ router.use(authenticateToken);
 router.post("/create", createAuction);
 router.post("/:auctionId/lots", uploadLotFields, createLot);
 router.get("/my-auctions", getMyAuctions);
+router.put("/:auctionId", updateAuction);
+router.delete("/:auctionId", deleteAuction);
 router.patch("/:auctionId/status", updateAuctionStatus);
 router.post("/:auctionId/start", startAuction);
 router.post("/:auctionId/end", endAuction);

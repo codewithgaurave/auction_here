@@ -779,3 +779,120 @@ export const endAuction = async (req, res) => {
     });
   }
 };
+
+// ✅ Delete Auction (Seller Only)
+export const deleteAuction = async (req, res) => {
+  try {
+    const { auctionId } = req.params;
+    
+    const auction = await Auction.findOne({ auctionId, sellerId: req.user.userId });
+    if (!auction) {
+      return res.status(404).json({
+        success: false,
+        message: "Auction not found or access denied"
+      });
+    }
+
+    // Don't allow deletion of live auctions
+    if (auction.status === "live") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot delete a live auction. Please end it first."
+      });
+    }
+
+    // Delete all lots associated with this auction
+    await Lot.deleteMany({ auctionId });
+
+    // Delete the auction
+    await Auction.deleteOne({ auctionId });
+
+    return res.json({
+      success: true,
+      message: "Auction deleted successfully"
+    });
+  } catch (error) {
+    console.error("Delete auction error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while deleting auction",
+      error: error.message
+    });
+  }
+};
+
+// ✅ Update Auction (Seller Only)
+export const updateAuction = async (req, res) => {
+  try {
+    const { auctionId } = req.params;
+    const {
+      auctionName,
+      description,
+      category,
+      startDate,
+      endDate,
+      startTime,
+      endTime
+    } = req.body;
+
+    const auction = await Auction.findOne({ auctionId, sellerId: req.user.userId });
+    if (!auction) {
+      return res.status(404).json({
+        success: false,
+        message: "Auction not found or access denied"
+      });
+    }
+
+    // Don't allow editing of live or completed auctions
+    if (auction.status === "live" || auction.status === "completed") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot edit ${auction.status} auction`
+      });
+    }
+
+    // Update fields if provided
+    if (auctionName) auction.auctionName = auctionName;
+    if (description) auction.description = description;
+    if (category) auction.category = category;
+    if (startDate && startTime) {
+      auction.startDate = new Date(`${startDate}T${startTime}`);
+      auction.startTime = startTime;
+    }
+    if (endDate && endTime) {
+      auction.endDate = new Date(`${endDate}T${endTime}`);
+      auction.endTime = endTime;
+    }
+
+    // Validate dates
+    if (auction.endDate <= auction.startDate) {
+      return res.status(400).json({
+        success: false,
+        message: "End date/time must be after start date/time"
+      });
+    }
+
+    auction.updatedAt = new Date();
+    await auction.save();
+
+    return res.json({
+      success: true,
+      message: "Auction updated successfully",
+      auction: {
+        auctionId: auction.auctionId,
+        auctionName: auction.auctionName,
+        category: auction.category,
+        startDate: auction.startDate,
+        endDate: auction.endDate,
+        status: auction.status
+      }
+    });
+  } catch (error) {
+    console.error("Update auction error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while updating auction",
+      error: error.message
+    });
+  }
+};
