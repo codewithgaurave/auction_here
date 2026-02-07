@@ -601,7 +601,7 @@ export const deleteLot = async (req, res) => {
   }
 };
 
-// ✅ Get Seller's Lots
+// ✅ Get Seller's Lots with Highest Bidder Details
 export const getMyLots = async (req, res) => {
   try {
     const { page = 1, limit = 10, status, auctionId } = req.query;
@@ -619,17 +619,50 @@ export const getMyLots = async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit))
-      .populate('auctionId', 'auctionName status')
-      .select('-bids -__v');
+      .select('-__v');
 
     const total = await Lot.countDocuments(filter);
+
+    // Add highest bidder details for each lot
+    const User = (await import('../models/User.js')).default;
+    const lotsWithBidderDetails = await Promise.all(
+      lots.map(async (lot) => {
+        const lotObj = lot.toObject();
+        
+        // Get auction details
+        const auction = await Auction.findOne({ auctionId: lot.auctionId })
+          .select('auctionName status');
+        
+        lotObj.auction = auction;
+        
+        // If there's a current bidder, get their details
+        if (lot.currentBidder) {
+          const bidder = await User.findOne({ userId: lot.currentBidder })
+            .select('userId name email phone');
+          
+          lotObj.highestBidder = bidder ? {
+            userId: bidder.userId,
+            name: bidder.name,
+            email: bidder.email,
+            phone: bidder.phone
+          } : null;
+        } else {
+          lotObj.highestBidder = null;
+        }
+        
+        // Add bid count
+        lotObj.totalBids = lot.bids ? lot.bids.length : 0;
+        
+        return lotObj;
+      })
+    );
 
     return res.json({
       success: true,
       page: parseInt(page),
       totalPages: Math.ceil(total / limit),
       totalLots: total,
-      lots
+      lots: lotsWithBidderDetails
     });
 
   } catch (error) {

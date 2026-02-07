@@ -324,23 +324,48 @@ export const createLot = async (req, res) => {
   }
 };
 
-// ✅ Get Seller's Auctions
+// ✅ Get Seller's Auctions with Highest Bidder Details
 export const getMyAuctions = async (req, res) => {
   try {
     const auctions = await Auction.find({ sellerId: req.user.userId })
       .sort({ createdAt: -1 })
       .select("-__v");
 
-    // Fetch lots for each auction
+    const User = (await import('../models/User.js')).default;
+
+    // Fetch lots with bidder details for each auction
     const auctionsWithLots = await Promise.all(
       auctions.map(async (auction) => {
         const lots = await Lot.find({ auctionId: auction.auctionId })
-          .select("lotId lotName currentBid status")
+          .select("lotId lotName currentBid currentBidder status")
           .sort({ createdAt: -1 });
+        
+        // Add highest bidder details to each lot
+        const lotsWithBidders = await Promise.all(
+          lots.map(async (lot) => {
+            const lotObj = lot.toObject();
+            
+            if (lot.currentBidder) {
+              const bidder = await User.findOne({ userId: lot.currentBidder })
+                .select('userId name email phone');
+              
+              lotObj.highestBidder = bidder ? {
+                userId: bidder.userId,
+                name: bidder.name,
+                email: bidder.email,
+                phone: bidder.phone
+              } : null;
+            } else {
+              lotObj.highestBidder = null;
+            }
+            
+            return lotObj;
+          })
+        );
         
         return {
           ...auction.toObject(),
-          lots
+          lots: lotsWithBidders
         };
       })
     );
