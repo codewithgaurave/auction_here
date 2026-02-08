@@ -1,11 +1,13 @@
 // controllers/auctionController.js
 import Auction from "../models/Auction.js";
 import Lot from "../models/Lot.js";
-// (Optional) direct import not needed for aggregation, but fine to keep if you need elsewhere
-// import User from "../models/User.js";
+import Bid from "../models/Bid.js";
 
 // ⬇️ Subscription quota hooks
 import { hasAuctionQuota, consumeAuctionQuota } from "../services/subscriptionQuota.js";
+
+// ⬇️ FCM Notification service
+import { notifyAuctionLive, notifyAuctionEnded } from "../services/fcmNotificationService.js";
 
 // ✅ Generate unique IDs
 const generateAuctionId = () => {
@@ -667,7 +669,7 @@ export const autoUpdateAuctionStatus = async () => {
   }
 };
 
-// ✅ Start Auction Manually (Enhanced)
+// ✅ Start Auction Manually (Enhanced with Notification)
 export const startAuction = async (req, res) => {
   try {
     const { auctionId } = req.params;
@@ -706,6 +708,10 @@ export const startAuction = async (req, res) => {
     auction.updatedAt = now;
     await auction.save();
 
+    // 🔔 Send notification to all buyers
+    notifyAuctionLive(auction.auctionId, auction.auctionName, auction.category)
+      .catch(err => console.error('Auction live notification error:', err));
+
     return res.json({
       success: true,
       message: "Auction started successfully",
@@ -726,7 +732,7 @@ export const startAuction = async (req, res) => {
   }
 };
 
-// ✅ End Auction Manually
+// ✅ End Auction Manually (with Notification)
 export const endAuction = async (req, res) => {
   try {
     const { auctionId } = req.params;
@@ -746,11 +752,18 @@ export const endAuction = async (req, res) => {
       });
     }
 
-    // Update lot statuses based on bids
+    // Update lot statuses and calculate stats
     const lots = await Lot.find({ auctionId });
+    let totalBids = 0;
+    let totalRevenue = 0;
+    
     for (const lot of lots) {
+      const bidCount = await Bid.countDocuments({ lotId: lot.lotId });
+      totalBids += bidCount;
+      
       if (lot.currentBid >= lot.reservePrice && lot.currentBidder) {
         lot.status = "sold";
+        totalRevenue += lot.currentBid;
       } else {
         lot.status = "unsold";
       }
@@ -761,13 +774,19 @@ export const endAuction = async (req, res) => {
     auction.updatedAt = new Date();
     await auction.save();
 
+    // 🔔 Send notification to seller
+    notifyAuctionEnded(req.user.userId, auction.auctionName, totalBids, totalRevenue)
+      .catch(err => console.error('Auction ended notification error:', err));
+
     return res.json({
       success: true,
       message: "Auction ended successfully",
       auction: {
         auctionId: auction.auctionId,
         auctionName: auction.auctionName,
-        status: auction.status
+        status: auction.status,
+        totalBids,
+        totalRevenue
       }
     });
   } catch (error) {

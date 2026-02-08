@@ -221,7 +221,7 @@ export const registerUser = async (req, res) => {
 // ✅ User Login (Updated with activity stats)
 export const loginUser = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, fcmToken } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({ message: "Email and password are required." });
@@ -251,11 +251,13 @@ export const loginUser = async (req, res) => {
         email: user.email 
       },
       JWT_SECRET
-      // No expiresIn option = token never expires
     );
 
-    // 🔥 Save token in DB
+    // 🔥 Save token and FCM token in DB
     user.token = token;
+    if (fcmToken) {
+      user.fcmToken = fcmToken;
+    }
     user.updatedAt = new Date();
     await user.save();
 

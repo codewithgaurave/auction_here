@@ -10,6 +10,9 @@ import { hasBidQuota, consumeBidQuota } from "../services/subscriptionQuota.js";
 // ⬇️ Real-time and notification services
 import { broadcastBidUpdate, handleBidNotifications } from "../services/realtimeService.js";
 
+// ⬇️ FCM Notification service
+import { notifyNewBidOnLot, notifyOutbid, notifyBidWon } from "../services/fcmNotificationService.js";
+
 // ID generator
 const generateBidId = () =>
   "BID" + Math.random().toString(36).substr(2, 9).toUpperCase();
@@ -181,6 +184,17 @@ export const placeBid = async (req, res) => {
       status: "valid"
     });
     await bidDoc.save();
+
+    // 🔔 Send FCM notifications
+    // Notify seller about new bid
+    notifyNewBidOnLot(lot.sellerId, lot.lotName, bidAmount, user.name)
+      .catch(err => console.error('New bid notification error:', err));
+
+    // Notify previous highest bidder that they were outbid
+    if (lot.currentBidder && lot.currentBidder !== user.userId) {
+      notifyOutbid(lot.currentBidder, lot.lotName, bidAmount)
+        .catch(err => console.error('Outbid notification error:', err));
+    }
 
     // ⬇️ Real-time bid update and notifications
     const io = req.app.get('io');
