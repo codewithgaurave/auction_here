@@ -13,8 +13,8 @@ import {
   updateUserProfile,
   deleteUser,
   getUserDetailedActivity,
-  forgotPassword,
-  resetPassword
+  verifyUser,
+  resetPasswordSimple
 } from "../controllers/userController.js";
 import { uploadUserFields } from "../config/cloudinary.js";
 import { authenticateToken } from "../middleware/auth.js";
@@ -25,8 +25,8 @@ const router = express.Router();
 router.post("/register", uploadUserFields, registerUser);
 router.post("/login", loginUser);
 router.get("/status/:userId", checkRegistrationStatus);
-router.post("/forgot-password", forgotPassword);
-router.post("/reset-password", resetPassword);
+router.post("/verify-user", verifyUser);
+router.post("/reset-password-simple", resetPasswordSimple);
 
 // Protected user routes (require authentication)
 router.get("/me", authenticateToken, getCurrentUserProfile);
