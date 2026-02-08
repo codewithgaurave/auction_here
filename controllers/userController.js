@@ -1,6 +1,7 @@
 // controllers/userController.js
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
+import nodemailer from "nodemailer";
 import User from "../models/User.js";
 import Auction from "../models/Auction.js";
 import Bid from "../models/Bid.js";
@@ -857,6 +858,121 @@ export const getUserDetailedActivity = async (req, res) => {
       },
       activityStats,
       detailedActivity
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ 
+      message: "Server error", 
+      error: err.message 
+    });
+  }
+};
+
+// ✅ Forgot Password - Send Reset Link
+export const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ message: "Email is required." });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: "User with this email does not exist." });
+    }
+
+    // Generate reset token (valid for 1 hour)
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const resetTokenExpiry = Date.now() + 3600000; // 1 hour
+
+    // Save token to user
+    user.resetPasswordToken = resetTokenHash;
+    user.resetPasswordExpiry = resetTokenExpiry;
+    await user.save();
+
+    // Create reset URL
+    const resetUrl = `auctionhere://reset-password?token=${resetToken}&email=${email}`;
+
+    // Send email
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: 'Password Reset Request - Auction Here',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #2e7d32;">Password Reset Request</h2>
+          <p>Hello ${user.name},</p>
+          <p>You requested to reset your password. Click the button below to reset it:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${resetUrl}" style="background-color: #2e7d32; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a>
+          </div>
+          <p>Or copy and paste this link in your browser:</p>
+          <p style="color: #666; word-break: break-all;">${resetUrl}</p>
+          <p style="color: #999; font-size: 12px; margin-top: 30px;">This link will expire in 1 hour. If you didn't request this, please ignore this email.</p>
+        </div>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    return res.json({
+      message: "Password reset link sent to your email.",
+      email: email
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ 
+      message: "Server error", 
+      error: err.message 
+    });
+  }
+};
+
+// ✅ Reset Password - Verify Token and Update Password
+export const resetPassword = async (req, res) => {
+  try {
+    const { email, token, newPassword } = req.body;
+
+    if (!email || !token || !newPassword) {
+      return res.status(400).json({ message: "Email, token, and new password are required." });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: "Password must be at least 6 characters." });
+    }
+
+    // Hash the token to compare
+    const resetTokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    const user = await User.findOne({ 
+      email,
+      resetPasswordToken: resetTokenHash,
+      resetPasswordExpiry: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ message: "Invalid or expired reset token." });
+    }
+
+    // Update password
+    user.password = newPassword;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpiry = undefined;
+    user.updatedAt = new Date();
+    await user.save();
+
+    return res.json({
+      message: "Password reset successful. You can now login with your new password."
     });
   } catch (err) {
     console.error(err);

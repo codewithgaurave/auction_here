@@ -37,6 +37,8 @@ const userSchema = new mongoose.Schema({
     enum: ["pending", "under verification", "approved", "rejected"]
   }, 
   token: { type: String },
+  resetPasswordToken: { type: String },
+  resetPasswordExpiry: { type: Number },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
