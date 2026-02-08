@@ -1,6 +1,16 @@
 import { sendNotification, sendNotificationToMultiple } from '../config/firebase.js';
 import User from '../models/User.js';
 
+// Generic function to send notification to a user
+export const sendNotificationToUser = async (fcmToken, title, body, data = {}) => {
+  try {
+    await sendNotification(fcmToken, title, body, data);
+  } catch (error) {
+    console.error('Error sending notification to user:', error);
+    throw error;
+  }
+};
+
 // Send notification when auction goes live
 export const notifyAuctionLive = async (auctionId, auctionName, category) => {
   try {
